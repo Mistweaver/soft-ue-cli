@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "Subsystems/EngineSubsystem.h"
 #include "Server/BridgeServer.h"
-#include "Containers/Ticker.h"
 #include "SoftUEBridgeSubsystem.generated.h"
 
 /** Engine subsystem that hosts the bridge HTTP server.
@@ -40,11 +39,17 @@ public:
 private:
 	TUniquePtr<FBridgeServer> Server;
 
-	/** Ticker handle: fires every 10 s to revive HTTP listeners disrupted by PIE */
-	FTSTicker::FDelegateHandle TickerHandle;
+	/** Revive HTTP listeners that PIE world-init silently killed. */
+	void ReviveListeners();
 
-	/** Called every 10 s; re-starts HttpServerModule listeners if PIE disrupted them */
-	bool OnTick(float DeltaTime);
+#if WITH_EDITOR
+	/** Handles for PIE lifecycle delegates — used to revive listeners after PIE disrupts them. */
+	FDelegateHandle BeginPIEHandle;
+	FDelegateHandle EndPIEHandle;
+
+	void OnBeginPIE(bool bIsSimulating);
+	void OnEndPIE(bool bIsSimulating);
+#endif
 
 	/** Port read from env var SOFT_UE_BRIDGE_PORT, default 8080 */
 	int32 ResolvePort() const;

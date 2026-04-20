@@ -12,6 +12,10 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
+#if WITH_EDITOR
+#include "Editor.h"
+#endif
+
 void USoftUEBridgeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -32,21 +36,21 @@ void USoftUEBridgeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Server = MakeUnique<FBridgeServer>();
 	StartServer(ResolvePort());
 
+#if WITH_EDITOR
 	// PIE world init can call HttpServerModule::StopAllListeners(), silently killing
-	// our listener without going through FBridgeServer::Stop().  Poll every 10 s and
-	// call StartAllListeners() to revive the listener if that happened.
-	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
-		FTickerDelegate::CreateUObject(this, &USoftUEBridgeSubsystem::OnTick),
-		10.0f
-	);
+	// our listener without going through FBridgeServer::Stop().  Instead of polling
+	// on a timer, respond to PIE lifecycle events and revive the listener once.
+	BeginPIEHandle = FEditorDelegates::BeginPIE.AddUObject(this, &USoftUEBridgeSubsystem::OnBeginPIE);
+	EndPIEHandle   = FEditorDelegates::EndPIE.AddUObject(this, &USoftUEBridgeSubsystem::OnEndPIE);
+#endif
 }
 
 void USoftUEBridgeSubsystem::Deinitialize()
 {
-	if (TickerHandle.IsValid())
-	{
-		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
-	}
+#if WITH_EDITOR
+	FEditorDelegates::BeginPIE.Remove(BeginPIEHandle);
+	FEditorDelegates::EndPIE.Remove(EndPIEHandle);
+#endif
 	StopServer();
 	Server.Reset();
 	FBridgeLogCapture::Get().Stop();
@@ -55,16 +59,27 @@ void USoftUEBridgeSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-bool USoftUEBridgeSubsystem::OnTick(float DeltaTime)
+void USoftUEBridgeSubsystem::ReviveListeners()
 {
 	if (Server.IsValid() && Server->IsRunning())
 	{
-		// Revive listeners silently stopped by PIE world init.
-		// StartAllListeners() is idempotent when listeners are already running.
 		FHttpServerModule::Get().StartAllListeners();
 	}
-	return true; // keep ticking
 }
+
+#if WITH_EDITOR
+void USoftUEBridgeSubsystem::OnBeginPIE(bool bIsSimulating)
+{
+	// PIE world init calls StopAllListeners() — revive ours immediately after.
+	ReviveListeners();
+}
+
+void USoftUEBridgeSubsystem::OnEndPIE(bool bIsSimulating)
+{
+	// PIE teardown may also stop listeners — revive after it completes.
+	ReviveListeners();
+}
+#endif
 
 bool USoftUEBridgeSubsystem::StartServer(int32 Port)
 {
