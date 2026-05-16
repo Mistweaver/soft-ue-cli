@@ -4,10 +4,57 @@
 #include "SoftUEBridgeEditorModule.h"
 #include "Engine/Engine.h"
 #include "Modules/ModuleManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 // Live Coding module (Windows only)
 #if PLATFORM_WINDOWS
 	#include "ILiveCodingModule.h"
+#endif
+
+#if PLATFORM_WINDOWS
+static FString NormalizeLiveCodingHeaderPath(FString RelativePath)
+{
+	RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	while (RelativePath.ReplaceInline(TEXT("//"), TEXT("/")) > 0) {}
+	return RelativePath.TrimStartAndEnd();
+}
+
+static bool IsHeaderPathInLiveCodingScope(
+	const FString& RelativePath,
+	const FString& ModuleScope,
+	const FString& PluginScope)
+{
+	const FString NormalizedPath = NormalizeLiveCodingHeaderPath(RelativePath);
+	if (!PluginScope.IsEmpty())
+	{
+		const FString PluginPrefix = FString(TEXT("Plugins/")) + PluginScope + TEXT("/");
+		const FString PluginSegment = FString(TEXT("/")) + PluginPrefix;
+		const FString LegacyPluginPrefix = FString(TEXT("Plugin/")) + PluginScope + TEXT("/");
+		const FString LegacyPluginSegment = FString(TEXT("/")) + LegacyPluginPrefix;
+		if (!NormalizedPath.StartsWith(PluginPrefix, ESearchCase::IgnoreCase)
+			&& !NormalizedPath.Contains(PluginSegment, ESearchCase::IgnoreCase)
+			&& !NormalizedPath.StartsWith(LegacyPluginPrefix, ESearchCase::IgnoreCase)
+			&& !NormalizedPath.Contains(LegacyPluginSegment, ESearchCase::IgnoreCase))
+		{
+			return false;
+		}
+	}
+
+	if (!ModuleScope.IsEmpty())
+	{
+		const FString ModuleSourcePrefix = FString(TEXT("Source/")) + ModuleScope + TEXT("/");
+		const FString ModuleSourceSegment = FString(TEXT("/")) + ModuleSourcePrefix;
+		if (!NormalizedPath.StartsWith(ModuleSourcePrefix, ESearchCase::IgnoreCase)
+			&& !NormalizedPath.Contains(ModuleSourceSegment, ESearchCase::IgnoreCase))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
 #endif
 
 FString UTriggerLiveCodingTool::GetToolDescription() const
@@ -25,6 +72,24 @@ TMap<FString, FBridgeSchemaProperty> UTriggerLiveCodingTool::GetInputSchema() co
 	WaitForCompletion.bRequired = false;
 	Schema.Add(TEXT("wait_for_completion"), WaitForCompletion);
 
+	FBridgeSchemaProperty AllowHeaderChanges;
+	AllowHeaderChanges.Type = TEXT("boolean");
+	AllowHeaderChanges.Description = TEXT("If true, bypass reflected-header preflight warnings and trigger Live Coding anyway");
+	AllowHeaderChanges.bRequired = false;
+	Schema.Add(TEXT("allow_header_changes"), AllowHeaderChanges);
+
+	FBridgeSchemaProperty ModuleScope;
+	ModuleScope.Type = TEXT("string");
+	ModuleScope.Description = TEXT("Limit reflected-header preflight checks to this module name, e.g. SoftUEBridgeEditor");
+	ModuleScope.bRequired = false;
+	Schema.Add(TEXT("module"), ModuleScope);
+
+	FBridgeSchemaProperty PluginScope;
+	PluginScope.Type = TEXT("string");
+	PluginScope.Description = TEXT("Limit reflected-header preflight checks to this plugin directory, e.g. SoftUEBridge");
+	PluginScope.bRequired = false;
+	Schema.Add(TEXT("plugin"), PluginScope);
+
 	return Schema;
 }
 
@@ -40,6 +105,23 @@ FBridgeToolResult UTriggerLiveCodingTool::Execute(
 #if !PLATFORM_WINDOWS
 	return FBridgeToolResult::Error(TEXT("Live Coding is only supported on Windows"));
 #else
+	const bool bAllowHeaderChanges = GetBoolArgOrDefault(Arguments, TEXT("allow_header_changes"), false);
+	const FString ModuleScope = GetStringArgOrDefault(Arguments, TEXT("module")).TrimStartAndEnd();
+	const FString PluginScope = GetStringArgOrDefault(Arguments, TEXT("plugin")).TrimStartAndEnd();
+	if (!bAllowHeaderChanges)
+	{
+		TArray<FString> RiskyHeaders;
+		if (DetectReflectedHeaderChanges(RiskyHeaders, ModuleScope, PluginScope))
+		{
+			const FString ScopeMessage = (ModuleScope.IsEmpty() && PluginScope.IsEmpty())
+				? TEXT("")
+				: FString::Printf(TEXT(" within scope module='%s' plugin='%s'"), *ModuleScope, *PluginScope);
+			return FBridgeToolResult::Error(FString::Printf(
+				TEXT("trigger-live-coding: reflected header changes detected%s (%s). Live Coding will likely cancel; run build-and-relaunch instead or pass allow_header_changes=true."),
+				*ScopeMessage,
+				*FString::Join(RiskyHeaders, TEXT(", "))));
+		}
+	}
 
 	// Try to use ILiveCodingModule for better control
 	ILiveCodingModule* LiveCodingModule = FModuleManager::GetModulePtr<ILiveCodingModule>("LiveCoding");
@@ -81,6 +163,75 @@ FBridgeToolResult UTriggerLiveCodingTool::Execute(
 }
 
 #if PLATFORM_WINDOWS
+bool UTriggerLiveCodingTool::DetectReflectedHeaderChanges(
+	TArray<FString>& OutFiles,
+	const FString& ModuleScope,
+	const FString& PluginScope) const
+{
+	OutFiles.Reset();
+
+	const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	int32 ReturnCode = -1;
+	FString StdOut;
+	FString StdErr;
+	const FString GitArgs = FString::Printf(TEXT("-C \"%s\" status --porcelain --untracked-files=all -- \"*.h\""), *ProjectDir);
+	FPlatformProcess::ExecProcess(TEXT("git"), *GitArgs, &ReturnCode, &StdOut, &StdErr);
+	if (ReturnCode != 0 || StdOut.IsEmpty())
+	{
+		return false;
+	}
+
+	TArray<FString> Lines;
+	StdOut.ParseIntoArrayLines(Lines);
+	for (const FString& Line : Lines)
+	{
+		if (Line.Len() < 4)
+		{
+			continue;
+		}
+
+		FString RelativePath = Line.Mid(3).TrimStartAndEnd();
+		int32 RenameArrowIndex = INDEX_NONE;
+		if (RelativePath.FindLastChar(TEXT('>'), RenameArrowIndex))
+		{
+			const int32 ArrowStart = RelativePath.Find(TEXT("->"));
+			if (ArrowStart != INDEX_NONE)
+			{
+				RelativePath = RelativePath.Mid(ArrowStart + 2).TrimStartAndEnd();
+			}
+		}
+		RelativePath = NormalizeLiveCodingHeaderPath(RelativePath);
+		if (!IsHeaderPathInLiveCodingScope(RelativePath, ModuleScope, PluginScope))
+		{
+			continue;
+		}
+
+		FString AbsolutePath = RelativePath;
+		if (FPaths::IsRelative(AbsolutePath))
+		{
+			AbsolutePath = FPaths::Combine(ProjectDir, RelativePath);
+		}
+
+		FString HeaderText;
+		if (!FFileHelper::LoadFileToString(HeaderText, *AbsolutePath))
+		{
+			continue;
+		}
+
+		if (HeaderText.Contains(TEXT("UCLASS("))
+			|| HeaderText.Contains(TEXT("USTRUCT("))
+			|| HeaderText.Contains(TEXT("UINTERFACE("))
+			|| HeaderText.Contains(TEXT("UENUM("))
+			|| HeaderText.Contains(TEXT("GENERATED_BODY("))
+			|| HeaderText.Contains(TEXT("GENERATED_UCLASS_BODY(")))
+		{
+			OutFiles.Add(RelativePath);
+		}
+	}
+
+	return OutFiles.Num() > 0;
+}
+
 FBridgeToolResult UTriggerLiveCodingTool::ExecuteSynchronous(ILiveCodingModule* LiveCodingModule)
 {
 	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("trigger-live-coding: Starting synchronous compilation..."));

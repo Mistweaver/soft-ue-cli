@@ -7,6 +7,9 @@
 #include "Internationalization/Text.h"
 #include "Kismet2/StructureEditorUtils.h"
 #include "StructUtils/UserDefinedStruct.h"
+#if __has_include("UserDefinedStructure/UserDefinedStructEditorData.h")
+#include "UserDefinedStructure/UserDefinedStructEditorData.h"
+#endif
 #include "UObject/EnumProperty.h"
 #include "UObject/UnrealType.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"

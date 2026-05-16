@@ -410,6 +410,17 @@ TArray<uint8> UCaptureScreenshotTool::CompressImage(
 	int32 Height,
 	const FString& Format)
 {
+	if (Width <= 0 || Height <= 0)
+	{
+		return {};
+	}
+
+	const int64 ExpectedPixelCount = static_cast<int64>(Width) * static_cast<int64>(Height);
+	if (ExpectedPixelCount <= 0 || RawData.Num() != ExpectedPixelCount || ExpectedPixelCount > MAX_int32 / 4)
+	{
+		return {};
+	}
+
 	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
 
 	EImageFormat ImageFormat = (Format == TEXT("jpeg")) ? EImageFormat::JPEG : EImageFormat::PNG;
@@ -423,7 +434,7 @@ TArray<uint8> UCaptureScreenshotTool::CompressImage(
 	// Convert FColor to raw RGBA bytes
 	// Note: FColor stores data as BGRA internally, but IImageWrapper expects RGBA
 	// Manual channel reordering is required for correct color output
-	const int32 DataSize = Width * Height * 4;
+	const int32 DataSize = static_cast<int32>(ExpectedPixelCount * 4);
 	TArray<uint8> RawBytes;
 	RawBytes.SetNumUninitialized(DataSize);
 

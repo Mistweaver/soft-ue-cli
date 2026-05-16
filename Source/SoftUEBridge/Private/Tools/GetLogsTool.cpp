@@ -4,6 +4,8 @@
 #include "Tools/BridgeToolRegistry.h"
 #include "SoftUEBridgeModule.h"
 #include "Misc/OutputDeviceRedirector.h"
+#include "Misc/DateTime.h"
+#include "Algo/AllOf.h"
 #include "Algo/Reverse.h"
 
 // ── FBridgeLogCapture ─────────────────────────────────────────────────────────
@@ -46,41 +48,69 @@ void FBridgeLogCapture::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity,
 	default:                     VerbStr = TEXT("Log");     break;
 	}
 
-	FString Line = FString::Printf(TEXT("[%s][%s] %s"), *Category.ToString(), *VerbStr, V);
+	FBridgeCapturedLogEntry Entry;
+	Entry.Timestamp = FDateTime::UtcNow().ToIso8601();
+	Entry.Category = Category.ToString();
+	Entry.Verbosity = VerbStr;
+	Entry.Message = V;
+	Entry.Line = FString::Printf(TEXT("[%s][%s] %s"), *Entry.Category, *Entry.Verbosity, V);
 
 	FScopeLock ScopeLock(&Lock);
-	Lines.Add(MoveTemp(Line));
-	if (Lines.Num() > MaxLines)
+	Entry.Sequence = NextSequence++;
+	Entries.Add(MoveTemp(Entry));
+	if (Entries.Num() > MaxLines)
 	{
-		Lines.RemoveAt(0, Lines.Num() - MaxLines);
+		Entries.RemoveAt(0, Entries.Num() - MaxLines);
 	}
 }
 
-TArray<FString> FBridgeLogCapture::GetLines(int32 N, const FString& Filter, const FString& Category) const
+TArray<FBridgeCapturedLogEntry> FBridgeLogCapture::GetEntries(
+	int32 N,
+	const FString& Filter,
+	const FString& Category,
+	const FString& Since) const
 {
 	FScopeLock ScopeLock(&Lock);
 
-	TArray<FString> Result;
-	if (N <= 0) return Result;
+	TArray<FBridgeCapturedLogEntry> Result;
+	const int32 RequestedCount = FMath::Max(N, 0);
+	const bool bHasSince = !Since.IsEmpty();
+	const bool bSinceIsCursor = bHasSince && Algo::AllOf(Since, [](TCHAR Ch) { return FChar::IsDigit(Ch); });
+	const uint64 SinceCursor = bSinceIsCursor ? FCString::Strtoui64(*Since, nullptr, 10) : 0;
 
 	const bool bHasFilter = !Filter.IsEmpty() || !Category.IsEmpty();
-	const FString CategoryBracket = Category.IsEmpty() ? FString() : (TEXT("[") + Category + TEXT("]"));
-
-	// When filtering, scan all lines (newest first) and stop after N matches.
-	// When not filtering, return the last N lines directly.
-	const int32 Start = bHasFilter ? 0 : FMath::Max(0, Lines.Num() - N);
-	Result.Reserve(FMath::Min(N, Lines.Num()));
-	for (int32 i = Lines.Num() - 1; i >= Start; --i)
+	const int32 Start = (bHasFilter || bHasSince || RequestedCount <= 0) ? 0 : FMath::Max(0, Entries.Num() - RequestedCount);
+	Result.Reserve(FMath::Min(RequestedCount > 0 ? RequestedCount : Entries.Num(), Entries.Num()));
+	for (int32 i = Entries.Num() - 1; i >= Start; --i)
 	{
-		const FString& Line = Lines[i];
-		if (!Filter.IsEmpty() && !Line.Contains(Filter, ESearchCase::IgnoreCase)) continue;
-		if (!CategoryBracket.IsEmpty() && !Line.Contains(CategoryBracket, ESearchCase::IgnoreCase)) continue;
-		Result.Add(Line);
-		if (Result.Num() >= N) break;
+		const FBridgeCapturedLogEntry& Entry = Entries[i];
+		if (!Filter.IsEmpty() && !Entry.Message.Contains(Filter, ESearchCase::IgnoreCase)) continue;
+		if (!Category.IsEmpty() && !Entry.Category.Equals(Category, ESearchCase::IgnoreCase)) continue;
+		if (bHasSince)
+		{
+			const bool bIsNewer = bSinceIsCursor ? Entry.Sequence > SinceCursor : Entry.Timestamp > Since;
+			if (!bIsNewer)
+			{
+				continue;
+			}
+		}
+		Result.Add(Entry);
+		if (RequestedCount > 0 && Result.Num() >= RequestedCount) break;
 	}
-	// Reverse so results are in chronological order (oldest first)
 	Algo::Reverse(Result);
 	return Result;
+}
+
+uint64 FBridgeLogCapture::GetLatestCursor() const
+{
+	FScopeLock ScopeLock(&Lock);
+	return Entries.Num() > 0 ? Entries.Last().Sequence : 0;
+}
+
+FString FBridgeLogCapture::GetLatestTimestamp() const
+{
+	FScopeLock ScopeLock(&Lock);
+	return Entries.Num() > 0 ? Entries.Last().Timestamp : FString();
 }
 
 // ── UGetLogsTool ──────────────────────────────────────────────────────────────
@@ -101,27 +131,44 @@ TMap<FString, FBridgeSchemaProperty> UGetLogsTool::GetInputSchema() const
 	S.Add(TEXT("lines"),    Prop(TEXT("integer"), TEXT("Number of recent lines to return (default: 100)")));
 	S.Add(TEXT("filter"),   Prop(TEXT("string"),  TEXT("Filter lines containing this text (case-insensitive)")));
 	S.Add(TEXT("category"), Prop(TEXT("string"),  TEXT("Filter by log category (e.g. 'LogBlueprintUserMessages')")));
+	S.Add(TEXT("since"),    Prop(TEXT("string"),  TEXT("Only return entries after this cursor/timestamp")));
 
 	return S;
 }
 
 FBridgeToolResult UGetLogsTool::Execute(const TSharedPtr<FJsonObject>& Args, const FBridgeToolContext& Ctx)
 {
-	const int32 N       = GetIntArgOrDefault(Args, TEXT("lines"), 100);
-	const FString Filter    = GetStringArgOrDefault(Args, TEXT("filter"));
-	const FString Category  = GetStringArgOrDefault(Args, TEXT("category"));
+	const int32 N = GetIntArgOrDefault(Args, TEXT("lines"), 100);
+	const FString Filter = GetStringArgOrDefault(Args, TEXT("filter"));
+	const FString Category = GetStringArgOrDefault(Args, TEXT("category"));
+	const FString Since = GetStringArgOrDefault(Args, TEXT("since"));
 
-	TArray<FString> LogLines = FBridgeLogCapture::Get().GetLines(N, Filter, Category);
+	TArray<FBridgeCapturedLogEntry> LogEntries = FBridgeLogCapture::Get().GetEntries(N, Filter, Category, Since);
 
 	TArray<TSharedPtr<FJsonValue>> LinesArr;
-	for (const FString& Line : LogLines)
+	TArray<TSharedPtr<FJsonValue>> EntriesArr;
+	for (const FBridgeCapturedLogEntry& Entry : LogEntries)
 	{
-		LinesArr.Add(MakeShareable(new FJsonValueString(Line)));
+		LinesArr.Add(MakeShareable(new FJsonValueString(Entry.Line)));
+
+		TSharedPtr<FJsonObject> EntryJson = MakeShareable(new FJsonObject);
+		EntryJson->SetStringField(TEXT("timestamp"), Entry.Timestamp);
+		EntryJson->SetNumberField(TEXT("cursor"), static_cast<double>(Entry.Sequence));
+		EntryJson->SetStringField(TEXT("category"), Entry.Category);
+		EntryJson->SetStringField(TEXT("verbosity"), Entry.Verbosity);
+		EntryJson->SetStringField(TEXT("message"), Entry.Message);
+		EntryJson->SetStringField(TEXT("line"), Entry.Line);
+		EntriesArr.Add(MakeShareable(new FJsonValueObject(EntryJson)));
 	}
 
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 	Result->SetArrayField(TEXT("lines"), LinesArr);
+	Result->SetArrayField(TEXT("entries"), EntriesArr);
 	Result->SetNumberField(TEXT("count"), LinesArr.Num());
+	Result->SetStringField(TEXT("last_timestamp"), FBridgeLogCapture::Get().GetLatestTimestamp());
+	Result->SetStringField(
+		TEXT("next_cursor"),
+		FString::Printf(TEXT("%llu"), static_cast<unsigned long long>(FBridgeLogCapture::Get().GetLatestCursor())));
 
 	return FBridgeToolResult::Json(Result);
 }

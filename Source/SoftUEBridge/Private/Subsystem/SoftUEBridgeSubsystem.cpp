@@ -35,21 +35,15 @@ void USoftUEBridgeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	FBridgeLogCapture::Get().Start();
 	Server = MakeUnique<FBridgeServer>();
 	StartServer(ResolvePort());
-
 #if WITH_EDITOR
-	// PIE world init can call HttpServerModule::StopAllListeners(), silently killing
-	// our listener without going through FBridgeServer::Stop().  Instead of polling
-	// on a timer, respond to PIE lifecycle events and revive the listener once.
-	BeginPIEHandle = FEditorDelegates::BeginPIE.AddUObject(this, &USoftUEBridgeSubsystem::OnBeginPIE);
-	EndPIEHandle   = FEditorDelegates::EndPIE.AddUObject(this, &USoftUEBridgeSubsystem::OnEndPIE);
+	RegisterPIERecoveryHooks();
 #endif
 }
 
 void USoftUEBridgeSubsystem::Deinitialize()
 {
 #if WITH_EDITOR
-	FEditorDelegates::BeginPIE.Remove(BeginPIEHandle);
-	FEditorDelegates::EndPIE.Remove(EndPIEHandle);
+	UnregisterPIERecoveryHooks();
 #endif
 	StopServer();
 	Server.Reset();
@@ -59,25 +53,56 @@ void USoftUEBridgeSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void USoftUEBridgeSubsystem::ReviveListeners()
+void USoftUEBridgeSubsystem::ReviveHttpListeners(const TCHAR* Reason)
 {
 	if (Server.IsValid() && Server->IsRunning())
 	{
+		UE_LOG(LogSoftUEBridge, Verbose, TEXT("SoftUEBridgeSubsystem: reviving HTTP listeners after %s"), Reason);
 		FHttpServerModule::Get().StartAllListeners();
 	}
 }
 
 #if WITH_EDITOR
-void USoftUEBridgeSubsystem::OnBeginPIE(bool bIsSimulating)
+void USoftUEBridgeSubsystem::RegisterPIERecoveryHooks()
 {
-	// PIE world init calls StopAllListeners() — revive ours immediately after.
-	ReviveListeners();
+	if (!PostPIEStartedHandle.IsValid())
+	{
+		PostPIEStartedHandle = FEditorDelegates::PostPIEStarted.AddUObject(
+			this,
+			&USoftUEBridgeSubsystem::HandlePostPIEStarted);
+	}
+
+	if (!ShutdownPIEHandle.IsValid())
+	{
+		ShutdownPIEHandle = FEditorDelegates::ShutdownPIE.AddUObject(
+			this,
+			&USoftUEBridgeSubsystem::HandleShutdownPIE);
+	}
 }
 
-void USoftUEBridgeSubsystem::OnEndPIE(bool bIsSimulating)
+void USoftUEBridgeSubsystem::UnregisterPIERecoveryHooks()
 {
-	// PIE teardown may also stop listeners — revive after it completes.
-	ReviveListeners();
+	if (PostPIEStartedHandle.IsValid())
+	{
+		FEditorDelegates::PostPIEStarted.Remove(PostPIEStartedHandle);
+		PostPIEStartedHandle.Reset();
+	}
+
+	if (ShutdownPIEHandle.IsValid())
+	{
+		FEditorDelegates::ShutdownPIE.Remove(ShutdownPIEHandle);
+		ShutdownPIEHandle.Reset();
+	}
+}
+
+void USoftUEBridgeSubsystem::HandlePostPIEStarted(bool /*bIsSimulating*/)
+{
+	ReviveHttpListeners(TEXT("PostPIEStarted"));
+}
+
+void USoftUEBridgeSubsystem::HandleShutdownPIE(bool /*bIsSimulating*/)
+{
+	ReviveHttpListeners(TEXT("ShutdownPIE"));
 }
 #endif
 

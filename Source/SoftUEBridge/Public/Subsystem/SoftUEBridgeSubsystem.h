@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Delegates/Delegate.h"
 #include "Subsystems/EngineSubsystem.h"
 #include "Server/BridgeServer.h"
 #include "SoftUEBridgeSubsystem.generated.h"
@@ -39,17 +40,18 @@ public:
 private:
 	TUniquePtr<FBridgeServer> Server;
 
-	/** Revive HTTP listeners that PIE world-init silently killed. */
-	void ReviveListeners();
-
 #if WITH_EDITOR
-	/** Handles for PIE lifecycle delegates — used to revive listeners after PIE disrupts them. */
-	FDelegateHandle BeginPIEHandle;
-	FDelegateHandle EndPIEHandle;
+	/** Editor lifecycle hooks used to revive HTTP listeners after PIE disrupts them. */
+	FDelegateHandle PostPIEStartedHandle;
+	FDelegateHandle ShutdownPIEHandle;
 
-	void OnBeginPIE(bool bIsSimulating);
-	void OnEndPIE(bool bIsSimulating);
+	void RegisterPIERecoveryHooks();
+	void UnregisterPIERecoveryHooks();
+	void HandlePostPIEStarted(bool bIsSimulating);
+	void HandleShutdownPIE(bool bIsSimulating);
 #endif
+
+	void ReviveHttpListeners(const TCHAR* Reason);
 
 	/** Port read from env var SOFT_UE_BRIDGE_PORT, default 8080 */
 	int32 ResolvePort() const;

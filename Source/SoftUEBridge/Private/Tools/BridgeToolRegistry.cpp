@@ -2,6 +2,9 @@
 
 #include "Tools/BridgeToolRegistry.h"
 #include "SoftUEBridgeModule.h"
+#include "Modules/ModuleManager.h"
+#include "Interfaces/IPluginManager.h"
+#include "ModuleDescriptor.h"
 
 FBridgeToolRegistry* FBridgeToolRegistry::Instance = nullptr;
 
@@ -45,8 +48,44 @@ void FBridgeToolRegistry::RegisterToolClass(UClass* ToolClass)
 	FScopeLock ScopeLock(&Lock);
 	ToolClasses.Add(ToolName, ToolClass);
 	ToolInstances.Add(ToolName, TempInstance);
+	FString ModuleName = ToolClass->GetOutermost() ? ToolClass->GetOutermost()->GetName() : TEXT("");
+	if (ModuleName.StartsWith(TEXT("/Script/")))
+	{
+		ModuleName = ModuleName.RightChop(8);
+	}
+	ToolModuleNames.Add(ToolName, ModuleName);
 
 	UE_LOG(LogSoftUEBridge, Log, TEXT("Registered tool: %s"), *ToolName);
+}
+
+int32 FBridgeToolRegistry::RemoveToolsForModule(const FString& ModuleName)
+{
+	FScopeLock ScopeLock(&Lock);
+
+	TArray<FString> ToolNamesToRemove;
+	for (const auto& Pair : ToolModuleNames)
+	{
+		if (Pair.Value.Equals(ModuleName, ESearchCase::IgnoreCase))
+		{
+			ToolNamesToRemove.Add(Pair.Key);
+		}
+	}
+
+	for (const FString& ToolName : ToolNamesToRemove)
+	{
+		if (TObjectPtr<UBridgeToolBase>* Instance = ToolInstances.Find(ToolName))
+		{
+			if (Instance->Get())
+			{
+				Instance->Get()->RemoveFromRoot();
+			}
+		}
+		ToolInstances.Remove(ToolName);
+		ToolClasses.Remove(ToolName);
+		ToolModuleNames.Remove(ToolName);
+	}
+
+	return ToolNamesToRemove.Num();
 }
 
 void FBridgeToolRegistry::ClearAllTools()
@@ -61,6 +100,7 @@ void FBridgeToolRegistry::ClearAllTools()
 	}
 	ToolInstances.Empty();
 	ToolClasses.Empty();
+	ToolModuleNames.Empty();
 }
 
 TArray<FBridgeToolDefinition> FBridgeToolRegistry::GetAllToolDefinitions() const
@@ -104,8 +144,40 @@ FBridgeToolResult FBridgeToolRegistry::ExecuteTool(
 	UBridgeToolBase* Tool = FindTool(ToolName);
 	if (!Tool)
 	{
-		return FBridgeToolResult::Error(
-			FString::Printf(TEXT("Unknown tool: %s"), *ToolName));
+		TArray<FString> ToolNames = GetRegisteredToolNames();
+		TArray<FString> ToolNameLines;
+		for (const FString& Name : ToolNames)
+		{
+			ToolNameLines.Add(FString::Printf(TEXT("  - %s"), *Name));
+		}
+		const FString AvailableTools = ToolNameLines.Num() > 0
+			? FString::Join(ToolNameLines, TEXT("\n"))
+			: TEXT("\n  - (no tools registered)");
+
+		TArray<FString> ModulePaths = GetLoadedModulePaths();
+		TArray<FString> ModulePathLines;
+		for (const FString& ModulePath : ModulePaths)
+		{
+			ModulePathLines.Add(FString::Printf(TEXT("  - %s"), *ModulePath));
+		}
+		const FString AvailableModulePaths = ModulePathLines.Num() > 0
+			? FString::Join(ModulePathLines, TEXT("\n"))
+			: TEXT("\n  - (no loaded module paths available)");
+
+		return FBridgeToolResult::Error(FString::Printf(
+			TEXT("Unknown tool: %s.\n")
+			TEXT("Requested: %s\n")
+			TEXT("Registered tool count: %d\n")
+			TEXT("Bridge version: %s\n")
+			TEXT("Available tools:\n%s\n")
+			TEXT("Loaded module paths:\n%s\n")
+			TEXT("Guidance: Restart the editor and ensure the SoftUEBridge plugin was rebuilt from the latest CLI-compatible source."),
+			*ToolName,
+			*ToolName,
+			GetToolCount(),
+			SOFTUEBRIDGE_VERSION,
+			*AvailableTools,
+			*AvailableModulePaths));
 	}
 
 	// Sanitize asset_path: collapse double slashes that crash CreatePackage/LoadObject
@@ -123,4 +195,77 @@ FBridgeToolResult FBridgeToolRegistry::ExecuteTool(
 
 	UE_LOG(LogSoftUEBridge, Log, TEXT("Executing tool: %s"), *ToolName);
 	return Tool->Execute(Arguments, Context);
+}
+
+TArray<FString> FBridgeToolRegistry::GetRegisteredToolNames() const
+{
+	FScopeLock ScopeLock(&Lock);
+	TArray<FString> ToolNames;
+	ToolClasses.GetKeys(ToolNames);
+	ToolNames.Sort();
+	return ToolNames;
+}
+
+TArray<FString> FBridgeToolRegistry::GetLoadedModulePaths() const
+{
+	TArray<FString> ModulePaths;
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("SoftUEBridge"));
+	if (!Plugin.IsValid())
+	{
+		return ModulePaths;
+	}
+
+	const FString BinariesDir = FPaths::Combine(
+		Plugin->GetBaseDir(),
+		TEXT("Binaries"),
+		FPlatformProcess::GetBinariesSubdirectory()
+	);
+	TArray<FString> Extensions;
+	Extensions.Add(TEXT(".dll"));
+	Extensions.Add(TEXT(".so"));
+	Extensions.Add(TEXT(".dylib"));
+	Extensions.Add(TEXT(".bundle"));
+	Extensions.Add(TEXT(".app"));
+	const FModuleManager& ModuleManager = FModuleManager::Get();
+
+	for (const FModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
+	{
+		const FString ModuleName = Module.Name.ToString();
+		if (ModuleName.IsEmpty())
+		{
+			continue;
+		}
+		const FName ModuleFName(*ModuleName);
+		if (!ModuleManager.IsModuleLoaded(ModuleFName))
+		{
+			continue;
+		}
+
+		FString ModuleFilePath = ModuleManager.GetModuleFilename(ModuleFName);
+		for (const FString& Extension : Extensions)
+		{
+			if (!ModuleFilePath.IsEmpty())
+			{
+				break;
+			}
+			const FString CandidatePath = FPaths::Combine(BinariesDir, ModuleName + Extension);
+			if (FPaths::FileExists(CandidatePath))
+			{
+				ModuleFilePath = CandidatePath;
+				break;
+			}
+		}
+
+		if (ModuleFilePath.IsEmpty())
+		{
+			ModulePaths.Add(FString::Printf(TEXT("%s: loaded (path unavailable)"), *ModuleName));
+		}
+		else
+		{
+			ModulePaths.Add(FString::Printf(TEXT("%s: %s"), *ModuleName, *ModuleFilePath));
+		}
+	}
+
+	ModulePaths.Sort();
+	return ModulePaths;
 }

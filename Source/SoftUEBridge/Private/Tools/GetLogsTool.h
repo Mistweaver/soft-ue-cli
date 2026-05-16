@@ -5,6 +5,16 @@
 #include "Misc/OutputDevice.h"
 #include "GetLogsTool.generated.h"
 
+struct FBridgeCapturedLogEntry
+{
+	uint64 Sequence = 0;
+	FString Timestamp;
+	FString Category;
+	FString Verbosity;
+	FString Message;
+	FString Line;
+};
+
 /** Thread-safe ring buffer capturing UE log output */
 class FBridgeLogCapture : public FOutputDevice
 {
@@ -17,16 +27,23 @@ public:
 	void Stop();
 
 	/** Retrieve up to N recent lines, optionally filtered by category or text */
-	TArray<FString> GetLines(int32 N, const FString& Filter = TEXT(""), const FString& Category = TEXT("")) const;
+	TArray<FBridgeCapturedLogEntry> GetEntries(
+		int32 N,
+		const FString& Filter = TEXT(""),
+		const FString& Category = TEXT(""),
+		const FString& Since = TEXT("")) const;
+	uint64 GetLatestCursor() const;
+	FString GetLatestTimestamp() const;
 
 protected:
 	virtual void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category) override;
 	virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
 
 private:
-	TArray<FString> Lines;
+	TArray<FBridgeCapturedLogEntry> Entries;
 	mutable FCriticalSection Lock;
 	bool bStarted = false;
+	uint64 NextSequence = 1;
 };
 
 UCLASS()
