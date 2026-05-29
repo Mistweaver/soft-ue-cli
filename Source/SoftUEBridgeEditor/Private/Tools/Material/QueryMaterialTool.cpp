@@ -235,22 +235,24 @@ TSharedPtr<FJsonObject> UQueryMaterialTool::ExpressionToJson(UMaterialExpression
 		ExprJson->SetNumberField(TEXT("y"), Expression->MaterialExpressionEditorY);
 	}
 
-	// Inputs — use FExpressionInputIterator for bounded iteration.
-	// IMPORTANT: Do NOT use the unbounded `for (i=0;;i++) GetInput(i)` pattern.
-	// Some expression subclasses (e.g. RVT samplers) never return nullptr from
-	// GetInput() on out-of-range indices, causing an infinite loop that
-	// allocates JSON objects until OOM.
+	// Inputs — use GetInputsView() for bounded iteration.
+	// Some expression subclasses never return nullptr from GetInput() on
+	// out-of-range indices, which can spin forever and OOM the editor.
 	TArray<TSharedPtr<FJsonValue>> InputsArray;
-	for (FExpressionInputIterator It(Expression); It; ++It)
+	TArrayView<FExpressionInput*> Inputs = Expression->GetInputsView();
+	for (int32 i = 0; i < Inputs.Num(); i++)
 	{
-		TSharedPtr<FJsonObject> InputJson = MakeShareable(new FJsonObject);
-		InputJson->SetStringField(TEXT("name"), Expression->GetInputName(It.Index).ToString());
-		InputJson->SetBoolField(TEXT("connected"), It->Expression != nullptr);
+		FExpressionInput* Input = Inputs[i];
+		if (!Input) continue;
 
-		if (It->Expression)
+		TSharedPtr<FJsonObject> InputJson = MakeShareable(new FJsonObject);
+		InputJson->SetStringField(TEXT("name"), Expression->GetInputName(i).ToString());
+		InputJson->SetBoolField(TEXT("connected"), Input->Expression != nullptr);
+
+		if (Input->Expression)
 		{
-			InputJson->SetStringField(TEXT("connected_to"), It->Expression->GetName());
-			InputJson->SetNumberField(TEXT("output_index"), It->OutputIndex);
+			InputJson->SetStringField(TEXT("connected_to"), Input->Expression->GetName());
+			InputJson->SetNumberField(TEXT("output_index"), Input->OutputIndex);
 		}
 
 		InputsArray.Add(MakeShareable(new FJsonValueObject(InputJson)));

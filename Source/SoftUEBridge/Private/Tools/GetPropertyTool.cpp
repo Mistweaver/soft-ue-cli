@@ -1,7 +1,6 @@
 // Copyright soft-ue-expert. All Rights Reserved.
 
 #include "Tools/GetPropertyTool.h"
-#include "Tools/BridgeToolRegistry.h"
 #include "SoftUEBridgeModule.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"

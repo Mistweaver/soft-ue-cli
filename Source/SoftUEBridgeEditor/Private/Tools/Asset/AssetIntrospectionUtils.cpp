@@ -12,7 +12,6 @@
 #endif
 #include "UObject/EnumProperty.h"
 #include "UObject/UnrealType.h"
-#include "UserDefinedStructure/UserDefinedStructEditorData.h"
 
 namespace
 {

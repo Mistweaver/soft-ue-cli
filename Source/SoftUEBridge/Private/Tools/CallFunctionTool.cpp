@@ -6,7 +6,6 @@
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "SoftUEBridgeModule.h"
-#include "Tools/BridgeToolRegistry.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 

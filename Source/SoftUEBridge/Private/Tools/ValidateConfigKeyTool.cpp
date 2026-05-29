@@ -3,7 +3,6 @@
 #include "Tools/ValidateConfigKeyTool.h"
 
 #include "Misc/ConfigCacheIni.h"
-#include "Tools/BridgeToolRegistry.h"
 #include "Tools/GetConfigValueTool.h"
 
 FString UValidateConfigKeyTool::GetToolDescription() const

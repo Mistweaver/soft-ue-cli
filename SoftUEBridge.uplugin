@@ -3,7 +3,7 @@
 	"Version": 4,
 	"VersionName": "1.3.3",
 	"FriendlyName": "SoftUE Bridge",
-	"Description": "HTTP bridge server for soft-ue-cli. Exposes UE operations (spawn actor, query level, call function, etc.) over HTTP/JSON-RPC. Active in Editor, Development, and DebugGame builds. Excluded from Shipping by default.",
+	"Description": "HTTP bridge server for soft-ue-cli. Exposes UE operations (spawn actor, query level, call function, etc.) over HTTP/JSON-RPC. Active in editor, PIE, and development builds by default.",
 	"Category": "Scripting",
 	"CreatedBy": "soft-ue-expert",
 	"CreatedByURL": "https://github.com/softdaddy-o/soft-ue-expert",
@@ -36,6 +36,10 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
 		}
 	],
 	"Modules": [

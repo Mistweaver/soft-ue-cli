@@ -4,7 +4,6 @@
 
 #include "Misc/ConfigCacheIni.h"
 #include "SoftUEBridgeModule.h"
-#include "Tools/BridgeToolRegistry.h"
 
 namespace
 {
