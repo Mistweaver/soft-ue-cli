@@ -78,11 +78,17 @@
 #include "Tools/StateTree/AddStateTreeTransitionTool.h"
 #include "Tools/StateTree/RemoveStateTreeStateTool.h"
 
+// Testing
+#include "Tools/Testing/RunAutomationTestsTool.h"
+
 // Animation
 #include "Tools/Animation/AddAnimStateMachineTool.h"
 #include "Tools/Animation/AddAnimStateTool.h"
 #include "Tools/Animation/AddAnimTransitionTool.h"
+#include "Tools/Animation/AnimBlueprintRetargetTool.h"
+#include "Tools/Animation/AnimRepointReferencesTool.h"
 #include "Tools/Animation/AnimSyncMarkerTools.h"
+#include "Tools/Animation/PoseSearchSchemaTools.h"
 
 // Widget
 #include "Tools/Widget/ApplyWidgetTreeTool.h"
@@ -120,6 +126,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 {
 	FBridgeToolRegistry& Registry = FBridgeToolRegistry::Get();
 
+	if (!Registry.HasTool(TEXT("metasound-inspect")))
+	{
+		Registry.RegisterToolClass<UInspectMetaSoundTool>();
+	}
 	if (!Registry.HasTool(TEXT("add-anim-state-machine")))
 	{
 		Registry.RegisterToolClass<UAddAnimStateMachineTool>();
@@ -148,8 +158,24 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	{
 		Registry.RegisterToolClass<URemoveSyncMarkerTool>();
 	}
+	if (!Registry.HasTool(TEXT("anim-repoint-references")))
+	{
+		Registry.RegisterToolClass<UAnimRepointReferencesTool>();
+	}
+	if (!Registry.HasTool(TEXT("anim-retarget-blueprint")))
+	{
+		Registry.RegisterToolClass<UAnimBlueprintRetargetTool>();
+	}
+	if (!Registry.HasTool(TEXT("pose-search-schema-inspect")))
+	{
+		Registry.RegisterToolClass<UPoseSearchSchemaInspectTool>();
+	}
+	if (!Registry.HasTool(TEXT("pose-search-schema-remap")))
+	{
+		Registry.RegisterToolClass<UPoseSearchSchemaRemapTool>();
+	}
 
-	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Registered deferred animation bridge tools; total tools: %d"), Registry.GetToolCount());
+	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Registered deferred editor bridge tools; total tools: %d"), Registry.GetToolCount());
 }
 
 bool FSoftUEBridgeEditorModule::RegisterAnimationToolsOnTicker(float /*DeltaTime*/)
@@ -173,7 +199,6 @@ void FSoftUEBridgeEditorModule::StartupModule()
 	Registry.RegisterToolClass<UQueryAssetTool>();
 	Registry.RegisterToolClass<UQueryEnumTool>();
 	Registry.RegisterToolClass<UQueryStructTool>();
-	Registry.RegisterToolClass<UInspectMetaSoundTool>();
 	Registry.RegisterToolClass<UDeleteAssetTool>();
 	Registry.RegisterToolClass<UAddCustomizableObjectNodeTool>();
 	Registry.RegisterToolClass<USetCustomizableObjectNodePropertyTool>();
@@ -245,8 +270,11 @@ void FSoftUEBridgeEditorModule::StartupModule()
 	Registry.RegisterToolClass<UAddStateTreeTransitionTool>();
 	Registry.RegisterToolClass<URemoveStateTreeStateTool>();
 
-	// Animation tools are newly added UCLASSes and may not have valid StaticClass()
-	// pointers at module startup in freshly rebuilt editor sessions.
+	// Testing
+	Registry.RegisterToolClass<URunAutomationTestsTool>();
+
+	// Newly added editor UCLASS tools may not have valid StaticClass() pointers
+	// at module startup in freshly rebuilt editor sessions.
 	PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(
 		this,
 		&FSoftUEBridgeEditorModule::RegisterAnimationTools);
