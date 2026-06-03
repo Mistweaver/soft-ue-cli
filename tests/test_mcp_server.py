@@ -1,4 +1,4 @@
-"""Tests for cli/soft_ue_cli/mcp_server.py — MCP server tool/prompt registration."""
+﻿"""Tests for cli/soft_ue_cli/mcp_server.py ??MCP server tool/prompt registration."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[2] / "cli"))
 
 # Skip all tests if mcp is not installed
 mcp = pytest.importorskip("mcp")
