@@ -235,18 +235,16 @@ TSharedPtr<FJsonObject> UQueryMaterialTool::ExpressionToJson(UMaterialExpression
 		ExprJson->SetNumberField(TEXT("y"), Expression->MaterialExpressionEditorY);
 	}
 
-	// Inputs — use GetInputsView() for bounded iteration.
-	// Some expression subclasses never return nullptr from GetInput() on
-	// out-of-range indices, which can spin forever and OOM the editor.
+	// Inputs — FExpressionInputIterator is the engine's bounded iterator
+	// (GetInputsView() was deprecated in 5.5). It stops as soon as
+	// GetInput(Index) returns nullptr, so it can't spin forever / OOM the editor.
 	TArray<TSharedPtr<FJsonValue>> InputsArray;
-	TArrayView<FExpressionInput*> Inputs = Expression->GetInputsView();
-	for (int32 i = 0; i < Inputs.Num(); i++)
+	for (FExpressionInputIterator It{ Expression }; It; ++It)
 	{
-		FExpressionInput* Input = Inputs[i];
-		if (!Input) continue;
+		FExpressionInput* Input = It.Input;
 
 		TSharedPtr<FJsonObject> InputJson = MakeShareable(new FJsonObject);
-		InputJson->SetStringField(TEXT("name"), Expression->GetInputName(i).ToString());
+		InputJson->SetStringField(TEXT("name"), Expression->GetInputName(It.Index).ToString());
 		InputJson->SetBoolField(TEXT("connected"), Input->Expression != nullptr);
 
 		if (Input->Expression)
