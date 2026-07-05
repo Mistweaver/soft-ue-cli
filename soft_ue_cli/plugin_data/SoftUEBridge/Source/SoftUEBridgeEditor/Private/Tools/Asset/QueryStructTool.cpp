@@ -7,6 +7,7 @@
 #include "SoftUEBridgeEditorModule.h"
 #include "StructUtils/UserDefinedStruct.h"
 #include "Tools/Asset/AssetIntrospectionUtils.h"
+#include "UObject/SoftObjectPath.h"
 
 FString UQueryStructTool::GetToolDescription() const
 {

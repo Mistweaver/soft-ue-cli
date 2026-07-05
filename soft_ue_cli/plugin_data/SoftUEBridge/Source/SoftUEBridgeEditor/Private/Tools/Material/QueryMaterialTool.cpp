@@ -237,7 +237,9 @@ TSharedPtr<FJsonObject> UQueryMaterialTool::ExpressionToJson(UMaterialExpression
 
 	// Inputs — FExpressionInputIterator is the engine's bounded iterator
 	// (GetInputsView() was deprecated in 5.5). It stops as soon as
-	// GetInput(Index) returns nullptr, so it can't spin forever / OOM the editor.
+	// GetInput(Index) returns nullptr. Some expression subclasses never
+	// return nullptr on out-of-range indices, so bounded traversal is what
+	// keeps this from spinning forever / OOMing the editor.
 	TArray<TSharedPtr<FJsonValue>> InputsArray;
 	for (FExpressionInputIterator It{ Expression }; It; ++It)
 	{
