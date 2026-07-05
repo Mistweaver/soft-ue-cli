@@ -7,6 +7,7 @@
 #include "Engine/UserDefinedEnum.h"
 #include "SoftUEBridgeEditorModule.h"
 #include "Tools/Asset/AssetIntrospectionUtils.h"
+#include "UObject/SoftObjectPath.h"
 
 FString UQueryEnumTool::GetToolDescription() const
 {
