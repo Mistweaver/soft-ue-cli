@@ -65,7 +65,7 @@ namespace
 		}
 
 		TArray<UObject*> InnerObjects;
-		GetObjectsWithOuter(AssetObject, InnerObjects, true);
+		GetObjectsWithOuter(AssetObject, InnerObjects, EGetObjectsFlags::IncludeNestedObjects);
 		for (UObject* InnerObject : InnerObjects)
 		{
 			if (UEdGraph* Graph = Cast<UEdGraph>(InnerObject))

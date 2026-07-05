@@ -309,7 +309,7 @@ void FSoftUEBridgeEditorModule::StartupModule()
 
 	// Newly added editor UCLASS tools may not have valid StaticClass() pointers
 	// at module startup in freshly rebuilt editor sessions.
-	PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(
+	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(
 		this,
 		&FSoftUEBridgeEditorModule::RegisterAnimationTools);
 	DeferredAnimationRegistrationHandle = FTSTicker::GetCoreTicker().AddTicker(
@@ -357,7 +357,7 @@ void FSoftUEBridgeEditorModule::ShutdownModule()
 {
 	if (PostEngineInitHandle.IsValid())
 	{
-		FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
+		FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
 		PostEngineInitHandle.Reset();
 	}
 	if (DeferredAnimationRegistrationHandle.IsValid())
