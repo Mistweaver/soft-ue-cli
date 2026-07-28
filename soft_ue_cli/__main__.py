@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from .client import call_tool, health_check
+from .client import call_tool, call_tool_ex, health_check, record_notices
 from .command_aliases import COMMAND_ALIAS_PREFIXES, REMOVED_COMMAND_MIGRATIONS
 from .diagnostics import (
     build_handoff_report,
@@ -42,6 +42,14 @@ _VECTOR_ARGUMENT_RE = re.compile(
     r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
     r"(?:,[+-]?(?:\d+(?:\.\d*)?|\.\d+)){2}$"
 )
+
+CLOTH_LEGACY_WEIGHT_MAP_TARGETS = [
+    "max-distance",
+    "anim-drive-stiffness",
+    "anim-drive-damping",
+    "backstop-distance",
+    "backstop-radius",
+]
 
 
 def _normalize_negative_vector_options(args: list[str] | None) -> list[str] | None:
@@ -270,6 +278,24 @@ def cmd_commands(args: argparse.Namespace) -> None:
         )
 
 
+def format_session_notices(notices: list[dict]) -> str:
+    """Render cross-session notices for stderr.
+
+    Deliberately plain: no severity markers. A strong marker on a message
+    that is often irrelevant trains the reader to skip it.
+    """
+    if not notices:
+        return ""
+    lines = ["[soft-ue session]"]
+    for notice in notices:
+        who = notice.get("from_label") or notice.get("from") or "another session"
+        text = notice.get("text", "")
+        lines.append(f"  {who}: {text}")
+        if reply := notice.get("reply_with"):
+            lines.append(f"    reply: {reply}")
+    return "\n".join(lines)
+
+
 def _run_tool(tool_name: str, arguments: dict, *, timeout: float | None = None) -> dict:
     """Call a bridge tool, handle errors with nudge hints, and track streak.
 
@@ -280,14 +306,21 @@ def _run_tool(tool_name: str, arguments: dict, *, timeout: float | None = None) 
 
     try:
         if timeout is None:
-            result = call_tool(tool_name, arguments)
+            result, meta = call_tool_ex(tool_name, arguments)
         else:
-            result = call_tool(tool_name, arguments, timeout=timeout)
+            result, meta = call_tool_ex(tool_name, arguments, timeout=timeout)
     except BridgeError as exc:
+        record_notices(getattr(exc, "notices", []))
+        if notice_text := format_session_notices(getattr(exc, "notices", [])):
+            print(notice_text, file=sys.stderr)
         print(f"error: {exc.message}", file=sys.stderr)
         if exc.kind == ErrorKind.UNEXPECTED:
             print(format_bug_nudge(exc.tool_name, exc.message), file=sys.stderr)
         sys.exit(1)
+
+    record_notices(meta.notices)
+    if notice_text := format_session_notices(meta.notices):
+        print(notice_text, file=sys.stderr)
 
     # Record daily streak on success (best-effort, never fail the command)
     try:
@@ -3953,6 +3986,16 @@ def cmd_cloth_chaos_query(args: argparse.Namespace) -> None:
     arguments: dict = {"cloth_asset": args.cloth_asset}
     if args.include_nodes:
         arguments["include_nodes"] = True
+    if args.gap_tolerance is not None:
+        arguments["gap_tolerance"] = args.gap_tolerance
+    if args.gap_limit is not None:
+        arguments["gap_limit"] = args.gap_limit
+    if args.dump_weights:
+        arguments["dump_weights"] = True
+    if args.weight_map:
+        arguments["weight_map"] = args.weight_map
+    if args.weight_limit is not None:
+        arguments["weight_limit"] = args.weight_limit
     _print_json(_run_tool("cloth-chaos-query", arguments))
 
 
@@ -3979,7 +4022,9 @@ def cmd_cloth_chaos_stitch(args: argparse.Namespace) -> None:
         arguments["second_vertices"] = _parse_int_range_list(args.second_vertices, "--second-vertices")
     if args.tolerance is not None:
         arguments["tolerance"] = args.tolerance
-    if args.save:
+    if args.dry_run:
+        arguments["dry_run"] = True
+    elif args.save:
         arguments["save"] = True
     _print_json(_run_tool("cloth-chaos-stitch", arguments))
 
@@ -3993,6 +4038,46 @@ def cmd_cloth_chaos_set_config(args: argparse.Namespace) -> None:
     if args.save:
         arguments["save"] = True
     _print_json(_run_tool("cloth-chaos-set-config", arguments))
+
+
+def cmd_cloth_chaos_set_weightmap(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "cloth_asset": args.cloth_asset,
+        "lod_index": args.lod_index,
+        "weight_map": args.weight_map,
+        "value": args.value,
+    }
+    if args.vertices:
+        if isinstance(args.vertices, list):
+            try:
+                arguments["vertices"] = [int(value) for value in args.vertices]
+            except (TypeError, ValueError):
+                print("error: --vertices expects integer indices", file=sys.stderr)
+                sys.exit(1)
+        else:
+            arguments["vertices"] = _parse_int_range_list(args.vertices, "--vertices")
+    if args.z_min is not None:
+        arguments["z_min"] = args.z_min
+    if args.z_max is not None:
+        arguments["z_max"] = args.z_max
+    if args.center:
+        if isinstance(args.center, list):
+            try:
+                center = [float(value) for value in args.center]
+            except (TypeError, ValueError):
+                print("error: --center expects X,Y,Z", file=sys.stderr)
+                sys.exit(1)
+        else:
+            center = _parse_vector(args.center)
+        if len(center) != 3:
+            print("error: --center expects X,Y,Z", file=sys.stderr)
+            sys.exit(1)
+        arguments["center"] = center
+    if args.radius is not None:
+        arguments["radius"] = args.radius
+    if args.save:
+        arguments["save"] = True
+    _print_json(_run_tool("cloth-chaos-set-weightmap", arguments))
 
 
 def cmd_cloth_create(args: argparse.Namespace) -> None:
@@ -4058,11 +4143,65 @@ def cmd_cloth_apply_weightmap(args: argparse.Namespace) -> None:
         arguments["min_distance"] = args.min_distance
     if args.max_distance is not None:
         arguments["max_distance"] = args.max_distance
+    if args.min_value is not None:
+        arguments["min_value"] = args.min_value
+    if args.max_value is not None:
+        arguments["max_value"] = args.max_value
+    if args.z_min is not None:
+        arguments["z_min"] = args.z_min
+    if args.z_max is not None:
+        arguments["z_max"] = args.z_max
+    if args.center:
+        if isinstance(args.center, list):
+            try:
+                center = [float(value) for value in args.center]
+            except (TypeError, ValueError):
+                print("error: --center expects X,Y,Z", file=sys.stderr)
+                sys.exit(1)
+        else:
+            center = _parse_vector(args.center)
+        if len(center) != 3:
+            print("error: --center expects X,Y,Z", file=sys.stderr)
+            sys.exit(1)
+        arguments["center"] = center
+    if args.radius is not None:
+        arguments["radius"] = args.radius
     if args.curve:
         arguments["curve"] = args.curve
     if args.invert:
         arguments["invert"] = True
     _print_json(_run_tool("cloth-apply-weightmap", arguments))
+
+
+def cmd_cloth_weld(args: argparse.Namespace) -> None:
+    arguments = _cloth_base_arguments(args)
+    arguments.update({
+        "asset_name": args.asset_name,
+        "lod_index": args.lod_index,
+        "tolerance": args.tolerance,
+    })
+    if args.section_index is not None:
+        arguments["section_index"] = args.section_index
+    if args.z_min is not None:
+        arguments["z_min"] = args.z_min
+    if args.z_max is not None:
+        arguments["z_max"] = args.z_max
+    if args.center:
+        if isinstance(args.center, list):
+            try:
+                center = [float(value) for value in args.center]
+            except (TypeError, ValueError):
+                print("error: --center expects X,Y,Z", file=sys.stderr)
+                sys.exit(1)
+        else:
+            center = _parse_vector(args.center)
+        if len(center) != 3:
+            print("error: --center expects X,Y,Z", file=sys.stderr)
+            sys.exit(1)
+        arguments["center"] = center
+    if args.radius is not None:
+        arguments["radius"] = args.radius
+    _print_json(_run_tool("cloth-weld", arguments))
 
 
 def cmd_cloth_set_collision(args: argparse.Namespace) -> None:
@@ -4072,6 +4211,135 @@ def cmd_cloth_set_collision(args: argparse.Namespace) -> None:
         "physics_asset": args.physics_asset,
     })
     _print_json(_run_tool("cloth-set-collision", arguments))
+
+
+def _session_common(args: argparse.Namespace) -> dict:
+    """Arguments every session action carries."""
+    from .client import set_session_label
+
+    set_session_label(args.session_as)
+    return {"as": args.session_as or ""}
+
+
+def cmd_session_announce(args: argparse.Namespace) -> None:
+    arguments = {"action": "announce", **_session_common(args)}
+    if args.status:
+        arguments["status"] = args.status
+    if args.resources:
+        arguments["resources"] = [r.strip() for r in args.resources.split(",") if r.strip()]
+    if args.intent:
+        arguments["intent"] = args.intent
+    if args.agent:
+        arguments["agent"] = args.agent
+    arguments["cwd"] = str(Path(args.cwd).resolve()) if args.cwd else str(Path.cwd())
+    _print_json(_run_tool("session", arguments))
+
+
+def cmd_session_list(args: argparse.Namespace) -> None:
+    arguments = {"action": "list", **_session_common(args)}
+    if args.resource:
+        arguments["resource"] = args.resource
+    if args.intent:
+        arguments["intent"] = args.intent
+    arguments["include_stale"] = bool(args.include_stale)
+    _print_json(_run_tool("session", arguments))
+
+
+def cmd_session_broadcast(args: argparse.Namespace) -> None:
+    arguments = {
+        "action": "broadcast",
+        "message": args.message,
+        "tag": args.tag,
+        **_session_common(args),
+    }
+    _print_json(_run_tool("session", arguments))
+
+
+def cmd_session_ask(args: argparse.Namespace) -> None:
+    arguments = {
+        "action": "ask",
+        "to": args.to,
+        "question": args.question,
+        **_session_common(args),
+    }
+    if args.context:
+        arguments["context"] = args.context
+    posted = _run_tool("session", arguments)
+    if not args.timeout:
+        _print_json(posted)
+        return
+    _print_json(_poll_for_answer(args, posted.get("ask_id", ""), float(args.timeout)))
+
+
+def _poll_for_answer(args: argparse.Namespace, ask_id: str, timeout_s: float) -> dict:
+    """Poll for an answer from the CLI. Never block the editor's game thread.
+
+    If the editor dies mid-poll, _run_tool prints the connection error (including
+    the session post-mortem) and exits the process. That is deliberate: there is
+    nothing left to wait for. Do not wrap this in a try/except that swallows it.
+    """
+    deadline = time.monotonic() + timeout_s
+    last = {}
+    while time.monotonic() < deadline:
+        last = _run_tool(
+            "session",
+            {"action": "inbox", "ask_id": ask_id, "no_mark_read": True, **_session_common(args)},
+        )
+        if last.get("answers"):
+            return last
+        time.sleep(2.0)
+    waited = int(timeout_s)
+    return {
+        "status": "no_answer",
+        "ask_id": ask_id,
+        "waited_s": waited,
+        "answered": [],
+        "silent": last.get("silent", []),
+        "guidance": (
+            f"No one answered in {waited}s. Silence is NOT consent. "
+            "Check each silent session's last_seen_s: recently active means genuinely busy, "
+            "long silent means probably a dead terminal. If you proceed, say so in your output."
+        ),
+    }
+
+
+def cmd_session_answer(args: argparse.Namespace) -> None:
+    arguments = {
+        "action": "answer",
+        "ask_id": args.id,
+        "answer": args.answer,
+        "decision": args.decision,
+        **_session_common(args),
+    }
+    _print_json(_run_tool("session", arguments))
+
+
+def cmd_session_inbox(args: argparse.Namespace) -> None:
+    arguments = {
+        "action": "inbox",
+        "unread_only": bool(args.unread_only),
+        "no_mark_read": bool(args.no_mark_read),
+        **_session_common(args),
+    }
+    if args.since:
+        arguments["since"] = args.since
+    if not args.wait:
+        _print_json(_run_tool("session", arguments))
+        return
+    deadline = time.monotonic() + float(args.wait)
+    while True:
+        result = _run_tool("session", arguments)
+        if result.get("messages") or time.monotonic() >= deadline:
+            _print_json(result)
+            return
+        time.sleep(2.0)
+
+
+def cmd_session_leave(args: argparse.Namespace) -> None:
+    arguments = {"action": "leave", **_session_common(args)}
+    if args.reason:
+        arguments["reason"] = args.reason
+    _print_json(_run_tool("session", arguments))
 
 
 def cmd_add_widget(args: argparse.Namespace) -> None:
@@ -4362,7 +4630,45 @@ def _claude_md_section(cli_cmd: str) -> str:
         "## Unreal Engine control\n\n"
         f"`{cli_cmd}` controls this UE project via the SoftUEBridge plugin.\n"
         f"Run `{cli_cmd} --help` to see all available commands.\n"
-        "The game or editor must be running with SoftUEBridge enabled before using UE commands.\n"
+        "The game or editor must be running with SoftUEBridge enabled before using UE commands.\n\n"
+        "### Sharing the editor with other agents\n\n"
+        "Other LLM sessions may be driving this same editor. Your first bridge call already\n"
+        "puts you on their roster -- but under a machine-derived name nobody will recognize\n"
+        "or type. Pick one short readable name for yourself now and prefix every command\n"
+        "with it: `SOFT_UE_SESSION=<your-name>`. The prefix goes on each command -- `export`\n"
+        "does not survive between Bash calls -- and on the command line it is the one form\n"
+        "that works on every command. (`--as <your-name>` exists only on `session` commands;\n"
+        "elsewhere it is an argparse error, and mixing the two forms puts your PIE claim on a\n"
+        "second, nameless roster row.) Through MCP there is no shell to prefix: pass\n"
+        "`session_as` to the `session announce` tool once and that name becomes the default\n"
+        "for every later tool call, `pie-session` included.\n\n"
+        "Before your first UE command:\n\n"
+        "```bash\n"
+        f'SOFT_UE_SESSION=<your-name> {cli_cmd} session announce --status "<what you are doing>"\n'
+        f"SOFT_UE_SESSION=<your-name> {cli_cmd} session list\n"
+        "# every other command takes the same prefix -- that is what keeps your PIE claim\n"
+        "# and your name on the same roster row:\n"
+        f"SOFT_UE_SESSION=<your-name> {cli_cmd} pie-session start\n"
+        "```\n\n"
+        "Before anything that restarts the editor, rebuilds, or stops PIE:\n\n"
+        "```bash\n"
+        f"SOFT_UE_SESSION=<your-name> {cli_cmd} session list\n"
+        f"SOFT_UE_SESSION=<your-name> {cli_cmd} session inbox\n"
+        "# someone else is active? ask before you disrupt them:\n"
+        f'SOFT_UE_SESSION=<your-name> {cli_cmd} session ask --to <their-name> \\\n'
+        '  --question "I need to rebuild and relaunch. Can I?" --timeout 120\n'
+        "```\n\n"
+        "Read each entry's `state` field: `active` means genuinely busy right now, `stale`\n"
+        "usually means a dead terminal. A session missing from the list entirely is not a\n"
+        "third state -- `stale` and `ended` entries are hidden by default, so re-run with\n"
+        "`--include-stale` before concluding anyone is gone.\n"
+        "Nothing is ever blocked and no one can veto you --\n"
+        "the call is yours. Silence is not consent: no answer is a normal outcome, because\n"
+        "the other session only sees your question when its own next bridge call returns.\n"
+        "So decide from `state` rather than waiting indefinitely. If you disrupt a session\n"
+        "that was active, say so in your output so the human can see it.\n\n"
+        f"When you are done, run `SOFT_UE_SESSION=<your-name> {cli_cmd} session leave`.\n"
+        f"Full protocol: `{cli_cmd} skills get session-protocol`.\n"
     )
 
 
@@ -4461,7 +4767,6 @@ def cmd_check_setup(args: argparse.Namespace) -> None:
 def cmd_knowledge(args: argparse.Namespace) -> None:
     """Query the optional knowledge server (RAG)."""
     print("Coming soon. Follow https://github.com/softdaddy-o/soft-ue-cli for updates.")
-
 
 def _load_expert_context_evidence(path: str | None) -> list[dict[str, str]]:
     if not path:
@@ -7848,6 +8153,11 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_chaos_query = cloth_sub.add_parser("chaos-query", help="Report Dataflow Chaos Cloth Asset state")
     p_cloth_chaos_query.add_argument("cloth_asset", help="Chaos Cloth Asset path")
     p_cloth_chaos_query.add_argument("--include-nodes", action="store_true", help="Include Dataflow graph/node metadata when available")
+    p_cloth_chaos_query.add_argument("--gap-tolerance", type=float, metavar="CM", help="Report unwelded near-vertex gap candidates within this distance")
+    p_cloth_chaos_query.add_argument("--gap-limit", type=int, metavar="N", help="Maximum gap candidates to return")
+    p_cloth_chaos_query.add_argument("--dump-weights", action="store_true", help="Include per-simulation-vertex weight map values")
+    p_cloth_chaos_query.add_argument("--weight-map", default=None, metavar="NAME", help="Weight map name for --dump-weights or chaos-set-weightmap")
+    p_cloth_chaos_query.add_argument("--weight-limit", type=int, metavar="N", help="Maximum per-vertex weight entries to return")
     p_cloth_chaos_query.set_defaults(func=cmd_cloth_chaos_query)
 
     p_cloth_convert = cloth_sub.add_parser("convert", help="Convert legacy in-mesh clothing data to a Chaos Cloth Asset")
@@ -7866,6 +8176,7 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_chaos_stitch.add_argument("--first-vertices", help="Comma-separated index/range list for --mode proximity, e.g. 0-4,8")
     p_cloth_chaos_stitch.add_argument("--second-vertices", help="Comma-separated index/range list for --mode proximity")
     p_cloth_chaos_stitch.add_argument("--tolerance", type=float, metavar="CM", help="Maximum pairing distance for proximity mode")
+    p_cloth_chaos_stitch.add_argument("--dry-run", action="store_true", help="Report candidate stitch pairs without mutating or saving")
     p_cloth_chaos_stitch.add_argument("--save", action="store_true", help="Save the Chaos Cloth Asset after mutation")
     p_cloth_chaos_stitch.set_defaults(func=cmd_cloth_chaos_stitch)
 
@@ -7875,6 +8186,19 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_chaos_set_config.add_argument("--properties", required=True, help="JSON object of property names to values")
     p_cloth_chaos_set_config.add_argument("--save", action="store_true", help="Save the Chaos Cloth Asset after mutation")
     p_cloth_chaos_set_config.set_defaults(func=cmd_cloth_chaos_set_config)
+
+    p_cloth_chaos_set_weightmap = cloth_sub.add_parser("chaos-set-weightmap", help="Set Chaos Cloth Asset weight map values by vertex or spatial selection")
+    p_cloth_chaos_set_weightmap.add_argument("cloth_asset", help="Chaos Cloth Asset path")
+    p_cloth_chaos_set_weightmap.add_argument("--lod-index", type=int, default=0, metavar="LOD", help="Chaos Cloth Asset LOD (default: 0)")
+    p_cloth_chaos_set_weightmap.add_argument("--weight-map", default="MaxDistance", metavar="NAME", help="Weight map name (default: MaxDistance)")
+    p_cloth_chaos_set_weightmap.add_argument("--vertices", help="Comma-separated simulation 3D vertex index/range list")
+    p_cloth_chaos_set_weightmap.add_argument("--z-min", type=float, metavar="CM", help="Select vertices with local Z greater than or equal to this value")
+    p_cloth_chaos_set_weightmap.add_argument("--z-max", type=float, metavar="CM", help="Select vertices with local Z less than or equal to this value")
+    p_cloth_chaos_set_weightmap.add_argument("--center", metavar="X,Y,Z", help="Sphere center for spatial vertex selection")
+    p_cloth_chaos_set_weightmap.add_argument("--radius", type=float, metavar="CM", help="Sphere radius for spatial vertex selection")
+    p_cloth_chaos_set_weightmap.add_argument("--value", type=float, required=True, help="Weight map value to assign to selected vertices")
+    p_cloth_chaos_set_weightmap.add_argument("--save", action="store_true", help="Save the Chaos Cloth Asset after mutation")
+    p_cloth_chaos_set_weightmap.set_defaults(func=cmd_cloth_chaos_set_weightmap)
 
     p_cloth_create = cloth_sub.add_parser("create", help="Create clothing data from a skeletal mesh section")
     p_cloth_create.add_argument("skeletal_mesh", help="Skeletal mesh asset path")
@@ -7920,18 +8244,37 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_apply_weightmap.add_argument("skeletal_mesh", help="Skeletal mesh asset path")
     p_cloth_apply_weightmap.add_argument("--asset-name", required=True, metavar="NAME", help="Clothing asset object name")
     p_cloth_apply_weightmap.add_argument("--lod-index", type=int, default=0, metavar="LOD", help="Clothing LOD index (default: 0)")
-    p_cloth_apply_weightmap.add_argument("--target", choices=["max-distance"], default="max-distance", help="Weight map target")
-    p_cloth_apply_weightmap.add_argument("--rule", choices=["constant", "vertex-color", "bone-distance"], required=True, help="Weight map generation rule")
-    p_cloth_apply_weightmap.add_argument("--value", type=float, help="Constant value for --rule constant")
+    p_cloth_apply_weightmap.add_argument("--target", choices=CLOTH_LEGACY_WEIGHT_MAP_TARGETS, default="max-distance", help="Weight map target")
+    p_cloth_apply_weightmap.add_argument("--rule", choices=["constant", "vertex-color", "bone-distance", "spatial"], required=True, help="Weight map generation rule")
+    p_cloth_apply_weightmap.add_argument("--value", type=float, help="Constant value for --rule constant or selected vertices with --rule spatial")
     p_cloth_apply_weightmap.add_argument("--channel", choices=["red", "green", "blue", "alpha"], help="Vertex color channel for --rule vertex-color")
     p_cloth_apply_weightmap.add_argument("--scale", type=float, help="Scale applied to vertex color values")
     p_cloth_apply_weightmap.add_argument("--root-bone", metavar="NAME", help="Reference bone for --rule bone-distance")
-    p_cloth_apply_weightmap.add_argument("--min-distance", type=float, metavar="VALUE", help="Output max-distance value at the nearest cloth vertices")
-    p_cloth_apply_weightmap.add_argument("--max-distance", type=float, metavar="VALUE", help="Output max-distance value at the farthest cloth vertices")
-    p_cloth_apply_weightmap.add_argument("--curve", choices=["linear", "smooth", "ease"], help="Falloff curve for --rule bone-distance")
+    p_cloth_apply_weightmap.add_argument("--min-distance", type=float, metavar="VALUE", help="Output weight value at the nearest cloth vertices")
+    p_cloth_apply_weightmap.add_argument("--max-distance", type=float, metavar="VALUE", help="Output weight value at the farthest cloth vertices")
+    p_cloth_apply_weightmap.add_argument("--min-value", type=float, metavar="VALUE", help="Spatial ramp value at z-min or the lowest selected cloth vertices")
+    p_cloth_apply_weightmap.add_argument("--max-value", type=float, metavar="VALUE", help="Spatial ramp value at z-max or the highest selected cloth vertices")
+    p_cloth_apply_weightmap.add_argument("--z-min", type=float, metavar="CM", help="Select vertices with local Z greater than or equal to this value for --rule spatial")
+    p_cloth_apply_weightmap.add_argument("--z-max", type=float, metavar="CM", help="Select vertices with local Z less than or equal to this value for --rule spatial")
+    p_cloth_apply_weightmap.add_argument("--center", metavar="X,Y,Z", help="Sphere center for spatial vertex selection")
+    p_cloth_apply_weightmap.add_argument("--radius", type=float, metavar="CM", help="Sphere radius for spatial vertex selection")
+    p_cloth_apply_weightmap.add_argument("--curve", choices=["linear", "smooth", "ease"], help="Falloff curve for --rule bone-distance or spatial ramp")
     p_cloth_apply_weightmap.add_argument("--invert", action="store_true", help="Invert the bone-distance falloff")
     p_cloth_apply_weightmap.add_argument("--save", action="store_true", help="Save the skeletal mesh after mutation")
     p_cloth_apply_weightmap.set_defaults(func=cmd_cloth_apply_weightmap)
+
+    p_cloth_weld = cloth_sub.add_parser("weld", help="Weld coincident vertices in a legacy in-mesh cloth physical mesh")
+    p_cloth_weld.add_argument("skeletal_mesh", help="Skeletal mesh asset path")
+    p_cloth_weld.add_argument("--asset-name", required=True, metavar="NAME", help="Clothing asset object name")
+    p_cloth_weld.add_argument("--lod-index", type=int, default=0, metavar="LOD", help="Clothing LOD index (default: 0)")
+    p_cloth_weld.add_argument("--section-index", type=int, metavar="INDEX", help="Optional bound skeletal mesh section to validate and remap")
+    p_cloth_weld.add_argument("--tolerance", type=float, required=True, metavar="CM", help="Maximum distance between physical mesh vertices to weld")
+    p_cloth_weld.add_argument("--z-min", type=float, metavar="CM", help="Select vertices with local Z greater than or equal to this value")
+    p_cloth_weld.add_argument("--z-max", type=float, metavar="CM", help="Select vertices with local Z less than or equal to this value")
+    p_cloth_weld.add_argument("--center", metavar="X,Y,Z", help="Sphere center for spatial vertex selection")
+    p_cloth_weld.add_argument("--radius", type=float, metavar="CM", help="Sphere radius for spatial vertex selection")
+    p_cloth_weld.add_argument("--save", action="store_true", help="Save the skeletal mesh after mutation")
+    p_cloth_weld.set_defaults(func=cmd_cloth_weld)
 
     p_cloth_collision = cloth_sub.add_parser("set-collision", help="Assign a physics asset for cloth collision")
     p_cloth_collision.add_argument("skeletal_mesh", help="Skeletal mesh asset path")
@@ -7939,6 +8282,144 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_collision.add_argument("--physics-asset", required=True, metavar="PATH", help="Physics asset path")
     p_cloth_collision.add_argument("--save", action="store_true", help="Save the skeletal mesh after mutation")
     p_cloth_collision.set_defaults(func=cmd_cloth_set_collision)
+
+    p_session = sub.add_parser(
+        "session",
+        help="Coordinate with other LLM sessions sharing this editor.",
+        description=(
+            "Other agents may be using this editor right now. This family lets you see\n"
+            "who they are, tell them what you are doing, and ask before disruptive work.\n"
+            "It never blocks anything: you decide what to do with what you learn.\n\n"
+            "EXAMPLES:\n"
+            "  SOFT_UE_SESSION=cape-cloth soft-ue-cli session list\n"
+            "  SOFT_UE_SESSION=cape-cloth soft-ue-cli session announce --status \"Converting SK_Cape to Chaos cloth\"\n"
+            "  SOFT_UE_SESSION=builder soft-ue-cli session ask --to cape-cloth --question \"Can I rebuild?\" --timeout 120\n\n"
+            "Prefix every command with SOFT_UE_SESSION, not just these: --as works only here,\n"
+            "so a bare `pie-session start` claims `pie` under a second, nameless roster row."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    session_sub = p_session.add_subparsers(dest="session_action", required=True)
+
+    def _add_as_flag(parser_obj):
+        parser_obj.add_argument(
+            "--as",
+            dest="session_as",
+            metavar="NAME",
+            default=os.environ.get("SOFT_UE_SESSION"),
+            help="Your session name (default: $SOFT_UE_SESSION). Pick a short readable one.",
+        )
+
+    p_sess_announce = session_sub.add_parser(
+        "announce",
+        help="Publish or update what you are doing and what you depend on.",
+        description=(
+            "Idempotent upsert of your session entry. Only needed for intent the bridge\n"
+            "cannot observe: PIE state is already derived from pie-session start/stop."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_announce)
+    p_sess_announce.add_argument("--status", metavar="TEXT", help="One line on what you are doing")
+    p_sess_announce.add_argument("--resources", metavar="LIST", help="Comma-separated asset paths or names you depend on")
+    p_sess_announce.add_argument("--intent", choices=["read", "write", "pie", "build", "editor-restart"], help="What kind of work this is")
+    p_sess_announce.add_argument("--agent", metavar="TEXT", help="Harness name, e.g. claude-code or codex")
+    p_sess_announce.add_argument("--cwd", metavar="PATH", help="Working directory (default: current)")
+    p_sess_announce.set_defaults(func=cmd_session_announce)
+
+    p_sess_list = session_sub.add_parser(
+        "list",
+        help="Show every session sharing this editor and how recently it was active.",
+        description=(
+            "Other agents may be using this editor right now. Call this before starting work,\n"
+            "and before anything that restarts, rebuilds, or stops PIE.\n"
+            "Stale entries are hidden by default; a stale entry usually means a dead terminal."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_list)
+    p_sess_list.add_argument("--resource", metavar="PATH", help="Only sessions depending on this resource")
+    p_sess_list.add_argument("--intent", choices=["read", "write", "pie", "build", "editor-restart"], help="Filter by declared intent")
+    p_sess_list.add_argument("--include-stale", action="store_true", help="Also show sessions silent for 15+ minutes")
+    p_sess_list.set_defaults(func=cmd_session_list)
+
+    p_sess_broadcast = session_sub.add_parser(
+        "broadcast",
+        help="Send a message to every other session. No reply expected.",
+        description=(
+            "Tell everyone sharing this editor something you are not asking permission for:\n"
+            "a long build starting, an asset about to move, or that you are proceeding after\n"
+            "nobody answered. Reaches every session; none of them has to reply."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_broadcast)
+    p_sess_broadcast.add_argument("--message", required=True, metavar="TEXT", help="What you want everyone to know")
+    p_sess_broadcast.add_argument("--tag", choices=["fyi", "warning", "request"], default="fyi", help="Message tag (default: fyi)")
+    p_sess_broadcast.set_defaults(func=cmd_session_broadcast)
+
+    p_sess_ask = session_sub.add_parser(
+        "ask",
+        help="Ask another session a question and optionally wait for the answer.",
+        description=(
+            "The other session only sees your question when its own next bridge call returns,\n"
+            "so no answer is a common and normal outcome. Silence is not consent."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_ask)
+    p_sess_ask.add_argument("--to", required=True, metavar="NAME", help="Target session name, or 'all'")
+    p_sess_ask.add_argument("--question", required=True, metavar="TEXT", help="What you want to know")
+    p_sess_ask.add_argument("--context", metavar="TEXT", help="Why you are asking")
+    p_sess_ask.add_argument("--timeout", type=float, default=0, metavar="SEC", help="Poll this long for an answer (default: 0, return immediately)")
+    p_sess_ask.set_defaults(func=cmd_session_ask)
+
+    p_sess_answer = session_sub.add_parser(
+        "answer",
+        help="Answer a question another session asked you.",
+        description=(
+            "Another session is deciding whether to disrupt your work and is waiting on you.\n"
+            "Set --decision so it can branch without reading prose. An ask expires the moment\n"
+            "it is answered, so only the first answer lands."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_answer)
+    p_sess_answer.add_argument("--id", required=True, metavar="ASK_ID", help="The ask_id from the question")
+    p_sess_answer.add_argument("--answer", required=True, metavar="TEXT", help="Your reply in words")
+    p_sess_answer.add_argument("--decision", choices=["yes", "no", "wait"], help="Machine-readable verdict so the asker can branch without reading prose")
+    p_sess_answer.set_defaults(func=cmd_session_answer)
+
+    p_sess_inbox = session_sub.add_parser(
+        "inbox",
+        help="Read messages and questions addressed to you.",
+        description=(
+            "Another session may be blocked waiting on an answer from you. Check this before\n"
+            "anything disruptive, and after any stretch where you made no bridge calls -- that\n"
+            "is exactly when questions pile up. You never receive your own messages."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_inbox)
+    p_sess_inbox.add_argument("--unread-only", action="store_true", help="Only messages you have not seen")
+    p_sess_inbox.add_argument("--since", metavar="ISO", help="Only messages newer than this UTC timestamp")
+    p_sess_inbox.add_argument("--wait", type=float, default=0, metavar="SEC", help="Poll this long for a new message (default: 0)")
+    p_sess_inbox.add_argument("--no-mark-read", action="store_true", help="Do not advance your read cursor")
+    p_sess_inbox.set_defaults(func=cmd_session_inbox)
+
+    p_sess_leave = session_sub.add_parser(
+        "leave",
+        help="Announce that you are done. The only clean end-of-session signal.",
+        description=(
+            "Run this when your work is finished. Without it your entry lingers until it ages\n"
+            "out on its own, and until then everyone else has to guess whether you are still\n"
+            "working and hold off on their own changes. Calling it twice is harmless."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_as_flag(p_sess_leave)
+    p_sess_leave.add_argument("--reason", metavar="TEXT", help="Why you are leaving")
+    p_sess_leave.set_defaults(func=cmd_session_leave)
 
     p_aw = sub.add_parser(
         "add-widget",

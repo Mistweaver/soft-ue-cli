@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/pypi/pyversions/soft-ue-cli.svg)](https://pypi.org/project/soft-ue-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![AI agents](https://img.shields.io/badge/AI_agents-ready-7c3aed)](#why-soft-ue-cli)
-[![skills](https://img.shields.io/badge/skills-12-84cc16)](#skills-llm-workflow-prompts)
+[![skills](https://img.shields.io/badge/skills-13-84cc16)](#skills-llm-workflow-prompts)
 [![commands](https://img.shields.io/badge/commands-120%2B-f97316)](#complete-command-reference)
 [![MCP](https://img.shields.io/badge/MCP-server-0ea5e9)](#mcp-server-mode)
 [![AI built for coding agents](https://img.shields.io/badge/AI_built_for-coding_agents-6b7280)](#why-soft-ue-cli)
@@ -374,12 +374,14 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | `cloth create` | Create a legacy in-mesh clothing asset from one or more SkeletalMesh material sections, optionally welding coincident boundary vertices |
 | `cloth bind` | Bind an existing clothing asset to a SkeletalMesh section and repair stale LOD/section metadata |
 | `cloth set-config` | Patch properties on a legacy clothing config object from JSON |
-| `cloth apply-weightmap` | Author common cloth weight maps from constants, gradients, vertex lists, texture channels, or bone-distance falloff |
+| `cloth apply-weightmap` | Author legacy cloth weight maps from constants, gradients, texture channels, bone-distance falloff, or physical-mesh spatial selection |
+| `cloth weld` | Weld coincident vertices in a legacy in-mesh clothing asset's physical mesh and rebuild render-to-cloth mappings |
 | `cloth extract-collision` | Extract cloth collision primitives from a PhysicsAsset into a clothing asset |
-| `cloth chaos-query` | Inspect a Dataflow-based Chaos Cloth Asset's LOD collections, seams, sim/render mesh counts, weight maps, and config state |
+| `cloth chaos-query` | Inspect a Dataflow-based Chaos Cloth Asset's LOD collections, seams, sim/render mesh counts, weight maps, gap candidates, and per-vertex weights |
 | `cloth convert` | Convert a legacy in-mesh clothing asset into a Dataflow-based Chaos Cloth Asset |
-| `cloth chaos-stitch` | Add seam/stitch pairs to a Chaos Cloth Asset simulation mesh using explicit vertex pairs or proximity matching |
+| `cloth chaos-stitch` | Add seam/stitch pairs to a Chaos Cloth Asset simulation mesh using explicit vertex pairs or proximity matching, with dry-run candidate reporting |
 | `cloth chaos-set-config` | Set Chaos Cloth Asset simulation config properties from a JSON object |
+| `cloth chaos-set-weightmap` | Set Chaos Cloth Asset weight-map values by sim vertex list, Z range, or sphere selection |
 
 ### Class and Type Inspection
 
@@ -513,6 +515,46 @@ Requires the **Animation Insights (GameplayInsights)** plugin enabled in Edit > 
 | `build-and-relaunch` | Trigger a full C++ rebuild and optionally relaunch the editor; `--wait` monitors staged progress, and offline fallback can build from `--project` when the bridge is unavailable |
 | `trigger-live-coding` | Trigger a Live Coding compile (hot reload); warns on risky reflected header changes and returns full-build guidance when Unreal cancels unsupported changes |
 | `reload-bridge-module` | Reload the bridge editor module from disk without a full editor restart |
+
+### Cross-Session Coordination
+
+| Command | Description |
+|---------|-------------|
+| `session` | Canonical cross-session coordination command family |
+| `session announce` | Publish or update this session's status, intent, and declared resources |
+| `session list` | List sessions sharing this editor, with liveness state and held resources |
+| `session broadcast` | Send a message to all other sessions -- no reply expected |
+| `session ask` | Ask another session a question, optionally polling for the answer |
+| `session answer` | Answer a question addressed to this session |
+| `session inbox` | Read messages and open questions addressed to this session |
+| `session leave` | Announce a clean end of this session's work |
+
+Several LLM coding sessions can drive the same Unreal Editor at once -- one mid-PIE-test while
+another runs `build-and-relaunch` and takes the editor down under it. The `session` family gives
+them a shared roster derived from bridge traffic: a session appears the moment it makes its first
+bridge call, under a machine-derived name, before it ever announces anything. `session announce`
+is for giving that entry a readable name and stating intent the bridge cannot observe on its own
+-- not for becoming visible in the first place. PIE state is derived the same way: `pie-session
+start`/`stop` claims the `pie` resource automatically, so filter the roster with `--resource pie`
+to find who would lose a running test, not `--intent pie` (that only matches sessions that
+declared it by hand). The family also lets a session ask before disruptive work such as
+rebuilding, restarting the editor, or stopping a running PIE session.
+
+```bash
+soft-ue-cli session announce --as cape-cloth --status "Converting SK_Cape to Chaos cloth" --intent write --resources /Game/Characters/SK_Cape
+soft-ue-cli session list --as cape-cloth
+soft-ue-cli session broadcast --as cape-cloth --message "Saving all assets in 30s" --tag warning
+soft-ue-cli session ask --as builder --to cape-cloth --question "Can I rebuild and relaunch?" --timeout 120
+soft-ue-cli session answer --as cape-cloth --id a-77 --decision wait --answer "3 more minutes, mid-PIE"
+soft-ue-cli session inbox --as cape-cloth --unread-only
+soft-ue-cli session leave --as cape-cloth --reason "cloth conversion done"
+```
+
+It is advisory only. Nothing in this family blocks any command, vetoes another session, or
+acquires a lock -- it tells a session who else is here and what they are doing, and the calling
+LLM always decides what to do with that information. Run `soft-ue-cli skills get session-protocol`
+for the full protocol: identity, liveness grading, how to treat silence, and the post-mortem shown
+when the editor disappears mid-call.
 
 ### Skills (LLM Workflow Prompts)
 

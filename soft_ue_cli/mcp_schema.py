@@ -54,6 +54,7 @@ EXCLUDED_COMMANDS: frozenset[str] = frozenset({
     "metasound",
     "mutable",
     "runtime",
+    "session",
     "skills",
     "mcp-serve",
     "statetree",
@@ -130,6 +131,22 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
         },
         "properties_remove": ["calls_file"],
         "required_add": ["calls"],
+    },
+    "cloth chaos-set-weightmap": {
+        "properties": {
+            "vertices": {"type": "array", "description": "Array of simulation 3D vertex indices"},
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial selection"},
+        },
+    },
+    "cloth apply-weightmap": {
+        "properties": {
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
+        },
+    },
+    "cloth weld": {
+        "properties": {
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
+        },
     },
     # run-python-script: script_args is a native JSON array in MCP, forwarded to sys.argv[1:].
     "run-python-script": {

@@ -72,6 +72,19 @@ public:
 };
 
 UCLASS()
+class SOFTUEBRIDGEEDITOR_API UClothChaosSetWeightMapTool : public UBridgeToolBase
+{
+	GENERATED_BODY()
+
+public:
+	virtual FString GetToolName() const override { return TEXT("cloth-chaos-set-weightmap"); }
+	virtual FString GetToolDescription() const override;
+	virtual TMap<FString, FBridgeSchemaProperty> GetInputSchema() const override;
+	virtual TArray<FString> GetRequiredParams() const override;
+	virtual FBridgeToolResult Execute(const TSharedPtr<FJsonObject>& Arguments, const FBridgeToolContext& Context) override;
+};
+
+UCLASS()
 class SOFTUEBRIDGEEDITOR_API UClothCreateTool : public UBridgeToolBase
 {
 	GENERATED_BODY()
@@ -117,6 +130,19 @@ class SOFTUEBRIDGEEDITOR_API UClothApplyWeightMapTool : public UBridgeToolBase
 
 public:
 	virtual FString GetToolName() const override { return TEXT("cloth-apply-weightmap"); }
+	virtual FString GetToolDescription() const override;
+	virtual TMap<FString, FBridgeSchemaProperty> GetInputSchema() const override;
+	virtual TArray<FString> GetRequiredParams() const override;
+	virtual FBridgeToolResult Execute(const TSharedPtr<FJsonObject>& Arguments, const FBridgeToolContext& Context) override;
+};
+
+UCLASS()
+class SOFTUEBRIDGEEDITOR_API UClothWeldTool : public UBridgeToolBase
+{
+	GENERATED_BODY()
+
+public:
+	virtual FString GetToolName() const override { return TEXT("cloth-weld"); }
 	virtual FString GetToolDescription() const override;
 	virtual TMap<FString, FBridgeSchemaProperty> GetInputSchema() const override;
 	virtual TArray<FString> GetRequiredParams() const override;

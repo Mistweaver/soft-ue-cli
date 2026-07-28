@@ -28,6 +28,7 @@
 #include "PointWeightMap.h"
 #include "Rendering/SkeletalMeshModel.h"
 #include "ScopedTransaction.h"
+#include "Utils/ClothingMeshUtils.h"
 #include "Utils/BridgeAssetModifier.h"
 #include "Utils/BridgeJsonObjectUtils.h"
 
@@ -188,6 +189,9 @@ void ClearOriginalSectionClothData(FSkelMeshSourceSectionUserData& OriginalSecti
 	OriginalSectionData.ClothingData.AssetLodIndex = INDEX_NONE;
 }
 
+FString LegacyWeightMapTargetToCliName(EWeightMapTargetCommon Target);
+FName LegacyWeightMapTargetToPointMapName(EWeightMapTargetCommon Target);
+bool ResolveLegacyWeightMapTarget(const FString& TargetName, EWeightMapTargetCommon& OutTarget, FString& OutCanonicalName, FString& OutError);
 void ConfigureWeightMapMetadata(FPointWeightMap& WeightMap, EWeightMapTargetCommon Target);
 
 bool BindClothAssetToSection(
@@ -454,10 +458,79 @@ bool BindClothAssetToSections(
 	return true;
 }
 
+FString LegacyWeightMapTargetToCliName(EWeightMapTargetCommon Target)
+{
+	switch (Target)
+	{
+	case EWeightMapTargetCommon::MaxDistance:
+		return TEXT("max-distance");
+	case EWeightMapTargetCommon::AnimDriveStiffness:
+		return TEXT("anim-drive-stiffness");
+	case EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED:
+		return TEXT("anim-drive-damping");
+	case EWeightMapTargetCommon::BackstopDistance:
+		return TEXT("backstop-distance");
+	case EWeightMapTargetCommon::BackstopRadius:
+		return TEXT("backstop-radius");
+	default:
+		return TEXT("unknown");
+	}
+}
+
+FName LegacyWeightMapTargetToPointMapName(EWeightMapTargetCommon Target)
+{
+	switch (Target)
+	{
+	case EWeightMapTargetCommon::MaxDistance:
+		return FName(TEXT("MaxDistance"));
+	case EWeightMapTargetCommon::AnimDriveStiffness:
+		return FName(TEXT("AnimDriveStiffness"));
+	case EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED:
+		return FName(TEXT("AnimDriveDamping"));
+	case EWeightMapTargetCommon::BackstopDistance:
+		return FName(TEXT("BackstopDistance"));
+	case EWeightMapTargetCommon::BackstopRadius:
+		return FName(TEXT("BackstopRadius"));
+	default:
+		return NAME_None;
+	}
+}
+
+bool ResolveLegacyWeightMapTarget(const FString& TargetName, EWeightMapTargetCommon& OutTarget, FString& OutCanonicalName, FString& OutError)
+{
+	if (TargetName.Equals(TEXT("max-distance"), ESearchCase::IgnoreCase))
+	{
+		OutTarget = EWeightMapTargetCommon::MaxDistance;
+	}
+	else if (TargetName.Equals(TEXT("anim-drive-stiffness"), ESearchCase::IgnoreCase))
+	{
+		OutTarget = EWeightMapTargetCommon::AnimDriveStiffness;
+	}
+	else if (TargetName.Equals(TEXT("anim-drive-damping"), ESearchCase::IgnoreCase))
+	{
+		OutTarget = EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED;
+	}
+	else if (TargetName.Equals(TEXT("backstop-distance"), ESearchCase::IgnoreCase))
+	{
+		OutTarget = EWeightMapTargetCommon::BackstopDistance;
+	}
+	else if (TargetName.Equals(TEXT("backstop-radius"), ESearchCase::IgnoreCase))
+	{
+		OutTarget = EWeightMapTargetCommon::BackstopRadius;
+	}
+	else
+	{
+		OutError = TEXT("cloth: target must be max-distance, anim-drive-stiffness, anim-drive-damping, backstop-distance, or backstop-radius");
+		return false;
+	}
+	OutCanonicalName = LegacyWeightMapTargetToCliName(OutTarget);
+	return true;
+}
+
 void ConfigureWeightMapMetadata(FPointWeightMap& WeightMap, EWeightMapTargetCommon Target)
 {
 #if WITH_EDITORONLY_DATA
-	WeightMap.Name = FName(TEXT("MaxDistance"));
+	WeightMap.Name = LegacyWeightMapTargetToPointMapName(Target);
 	WeightMap.CurrentTarget = static_cast<uint8>(Target);
 	WeightMap.bEnabled = true;
 #endif
@@ -539,9 +612,208 @@ TSharedPtr<FJsonObject> FloatArrayStatsToJson(TConstArrayView<float> Values)
 	return Json;
 }
 
+TArray<TSharedPtr<FJsonValue>> Vector3fToJsonArray(const FVector3f& Vector)
+{
+	TArray<TSharedPtr<FJsonValue>> Values;
+	Values.Add(MakeShared<FJsonValueNumber>(Vector.X));
+	Values.Add(MakeShared<FJsonValueNumber>(Vector.Y));
+	Values.Add(MakeShared<FJsonValueNumber>(Vector.Z));
+	return Values;
+}
+
+uint64 MakeVertexPairKey(int32 First, int32 Second)
+{
+	if (First > Second)
+	{
+		Swap(First, Second);
+	}
+	return (static_cast<uint64>(static_cast<uint32>(First)) << 32) | static_cast<uint32>(Second);
+}
+
+void AppendIntArrayJson(TArray<TSharedPtr<FJsonValue>>& OutValues, const TArray<int32>& Indices)
+{
+	for (int32 Index : Indices)
+	{
+		OutValues.Add(MakeShared<FJsonValueNumber>(Index));
+	}
+}
+
+TSet<uint64> BuildStitchedSim3DPairs(const UE::Chaos::ClothAsset::FCollectionClothConstFacade& Cloth)
+{
+	TSet<uint64> StitchedPairs;
+	TConstArrayView<int32> Vertex3DLookup = Cloth.GetSimVertex3DLookup();
+	for (int32 SeamIndex = 0; SeamIndex < Cloth.GetNumSeams(); ++SeamIndex)
+	{
+		const UE::Chaos::ClothAsset::FCollectionClothSeamConstFacade Seam = Cloth.GetSeam(SeamIndex);
+		for (const FIntVector2& Stitch2D : Seam.GetSeamStitch2DEndIndices())
+		{
+			if (Vertex3DLookup.IsValidIndex(Stitch2D.X) && Vertex3DLookup.IsValidIndex(Stitch2D.Y))
+			{
+				const int32 First3D = Vertex3DLookup[Stitch2D.X];
+				const int32 Second3D = Vertex3DLookup[Stitch2D.Y];
+				if (First3D != INDEX_NONE && Second3D != INDEX_NONE && First3D != Second3D)
+				{
+					StitchedPairs.Add(MakeVertexPairKey(First3D, Second3D));
+				}
+			}
+		}
+	}
+	return StitchedPairs;
+}
+
+TSharedPtr<FJsonObject> BuildChaosStitchPairJson(
+	const UE::Chaos::ClothAsset::FCollectionClothConstFacade& Cloth,
+	const FIntVector2& Pair,
+	const FString& IndexSpace)
+{
+	TSharedPtr<FJsonObject> PairJson = MakeShared<FJsonObject>();
+	PairJson->SetNumberField(TEXT("first_vertex_2d"), Pair.X);
+	PairJson->SetNumberField(TEXT("second_vertex_2d"), Pair.Y);
+	PairJson->SetStringField(TEXT("distance_space"), IndexSpace);
+	TConstArrayView<int32> Vertex3DLookup = Cloth.GetSimVertex3DLookup();
+	TConstArrayView<FVector3f> Positions = Cloth.GetSimPosition3D();
+	if (IndexSpace.Equals(TEXT("2d"), ESearchCase::IgnoreCase))
+	{
+		TConstArrayView<FVector2f> Positions2D = Cloth.GetSimPosition2D();
+		if (Positions2D.IsValidIndex(Pair.X) && Positions2D.IsValidIndex(Pair.Y))
+		{
+			const float SelectionDistance = FVector2f::Distance(Positions2D[Pair.X], Positions2D[Pair.Y]);
+			PairJson->SetNumberField(TEXT("selection_distance"), SelectionDistance);
+			PairJson->SetNumberField(TEXT("distance"), SelectionDistance);
+		}
+	}
+	if (Vertex3DLookup.IsValidIndex(Pair.X) && Vertex3DLookup.IsValidIndex(Pair.Y))
+	{
+		const int32 First3D = Vertex3DLookup[Pair.X];
+		const int32 Second3D = Vertex3DLookup[Pair.Y];
+		PairJson->SetNumberField(TEXT("first_vertex_3d"), First3D);
+		PairJson->SetNumberField(TEXT("second_vertex_3d"), Second3D);
+		if (Positions.IsValidIndex(First3D) && Positions.IsValidIndex(Second3D))
+		{
+			const float Distance3D = FVector3f::Distance(Positions[First3D], Positions[Second3D]);
+			PairJson->SetNumberField(TEXT("distance_3d"), Distance3D);
+			if (!IndexSpace.Equals(TEXT("2d"), ESearchCase::IgnoreCase))
+			{
+				PairJson->SetNumberField(TEXT("selection_distance"), Distance3D);
+				PairJson->SetNumberField(TEXT("distance"), Distance3D);
+			}
+		}
+	}
+	return PairJson;
+}
+
+TSharedPtr<FJsonObject> BuildChaosClothGapDiagnostics(
+	const UE::Chaos::ClothAsset::FCollectionClothConstFacade& Cloth,
+	float GapTolerance,
+	int32 GapLimit)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetNumberField(TEXT("gap_tolerance"), GapTolerance);
+	Json->SetNumberField(TEXT("gap_limit"), GapLimit);
+
+	TArray<TSharedPtr<FJsonValue>> GapCandidates;
+	const TConstArrayView<FVector3f> Positions = Cloth.GetSimPosition3D();
+	const TSet<uint64> StitchedPairs = BuildStitchedSim3DPairs(Cloth);
+	const float ToleranceSq = GapTolerance * GapTolerance;
+	constexpr int64 MaxChaosGapDistanceChecks = 250000;
+	int64 DistanceCheckCount = 0;
+	bool bTruncated = false;
+	int32 TotalCandidateCount = 0;
+	float MinDistance = TNumericLimits<float>::Max();
+	float MaxDistance = 0.0f;
+	for (int32 FirstIndex = 0; FirstIndex < Positions.Num() && !bTruncated; ++FirstIndex)
+	{
+		for (int32 SecondIndex = FirstIndex + 1; SecondIndex < Positions.Num(); ++SecondIndex)
+		{
+			if (StitchedPairs.Contains(MakeVertexPairKey(FirstIndex, SecondIndex)))
+			{
+				continue;
+			}
+			if (++DistanceCheckCount > MaxChaosGapDistanceChecks)
+			{
+				bTruncated = true;
+				break;
+			}
+			const float DistanceSq = FVector3f::DistSquared(Positions[FirstIndex], Positions[SecondIndex]);
+			if (DistanceSq > ToleranceSq)
+			{
+				continue;
+			}
+			const float Distance = FMath::Sqrt(DistanceSq);
+			++TotalCandidateCount;
+			MinDistance = FMath::Min(MinDistance, Distance);
+			MaxDistance = FMath::Max(MaxDistance, Distance);
+			if (GapLimit <= 0 || GapCandidates.Num() < GapLimit)
+			{
+				TSharedPtr<FJsonObject> Candidate = MakeShared<FJsonObject>();
+				Candidate->SetNumberField(TEXT("first_vertex_3d"), FirstIndex);
+				Candidate->SetNumberField(TEXT("second_vertex_3d"), SecondIndex);
+				Candidate->SetNumberField(TEXT("distance"), Distance);
+				Candidate->SetArrayField(TEXT("first_position"), Vector3fToJsonArray(Positions[FirstIndex]));
+				Candidate->SetArrayField(TEXT("second_position"), Vector3fToJsonArray(Positions[SecondIndex]));
+				GapCandidates.Add(MakeShared<FJsonValueObject>(Candidate));
+			}
+		}
+	}
+	Json->SetArrayField(TEXT("gap_candidates"), GapCandidates);
+	Json->SetNumberField(TEXT("candidate_count"), TotalCandidateCount);
+	Json->SetNumberField(TEXT("returned_count"), GapCandidates.Num());
+	Json->SetNumberField(TEXT("min_distance"), TotalCandidateCount > 0 ? MinDistance : 0.0f);
+	Json->SetNumberField(TEXT("max_distance"), TotalCandidateCount > 0 ? MaxDistance : 0.0f);
+	Json->SetNumberField(TEXT("distance_check_count"), static_cast<double>(DistanceCheckCount));
+	Json->SetNumberField(TEXT("max_distance_check_count"), static_cast<double>(MaxChaosGapDistanceChecks));
+	Json->SetBoolField(TEXT("truncated"), bTruncated);
+	return Json;
+}
+
+TSharedPtr<FJsonObject> DumpChaosClothWeightMapVertices(
+	const UE::Chaos::ClothAsset::FCollectionClothConstFacade& Cloth,
+	const FName& WeightMapName,
+	int32 WeightLimit)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("name"), WeightMapName.ToString());
+	Json->SetBoolField(TEXT("present"), Cloth.HasWeightMap(WeightMapName));
+	if (!Cloth.HasWeightMap(WeightMapName))
+	{
+		Json->SetNumberField(TEXT("count"), 0);
+		Json->SetNumberField(TEXT("returned_count"), 0);
+		Json->SetArrayField(TEXT("vertices"), {});
+		return Json;
+	}
+
+	const TConstArrayView<float> Values = Cloth.GetWeightMap(WeightMapName);
+	const TConstArrayView<FVector3f> Positions = Cloth.GetSimPosition3D();
+	const int32 VertexCount = FMath::Min(Values.Num(), Positions.Num());
+	TArray<TSharedPtr<FJsonValue>> Vertices;
+	for (int32 Index = 0; Index < VertexCount; ++Index)
+	{
+		if (WeightLimit > 0 && Vertices.Num() >= WeightLimit)
+		{
+			break;
+		}
+		TSharedPtr<FJsonObject> Vertex = MakeShared<FJsonObject>();
+		Vertex->SetNumberField(TEXT("index"), Index);
+		Vertex->SetNumberField(TEXT("value"), Values[Index]);
+		Vertex->SetBoolField(TEXT("is_kinematic"), FMath::IsNearlyZero(Values[Index]));
+		Vertex->SetArrayField(TEXT("position"), Vector3fToJsonArray(Positions[Index]));
+		Vertices.Add(MakeShared<FJsonValueObject>(Vertex));
+	}
+	Json->SetObjectField(TEXT("summary"), FloatArrayStatsToJson(Values));
+	Json->SetNumberField(TEXT("count"), VertexCount);
+	Json->SetNumberField(TEXT("returned_count"), Vertices.Num());
+	Json->SetArrayField(TEXT("vertices"), Vertices);
+	return Json;
+}
+
 TSharedPtr<FJsonObject> ChaosClothCollectionToJson(
 	const TSharedRef<const FManagedArrayCollection>& Collection,
-	int32 LodIndex)
+	int32 LodIndex,
+	bool bDumpWeights,
+	FName DumpWeightMapName,
+	int32 WeightLimit,
+	float GapTolerance,
+	int32 GapLimit)
 {
 	using namespace UE::Chaos::ClothAsset;
 
@@ -570,13 +842,27 @@ TSharedPtr<FJsonObject> ChaosClothCollectionToJson(
 
 	TArray<TSharedPtr<FJsonValue>> SeamValues;
 	int32 StitchCount = 0;
+	TConstArrayView<int32> Vertex3DLookup = Cloth.GetSimVertex3DLookup();
 	for (int32 SeamIndex = 0; SeamIndex < Cloth.GetNumSeams(); ++SeamIndex)
 	{
 		FCollectionClothSeamConstFacade Seam = Cloth.GetSeam(SeamIndex);
 		TSharedPtr<FJsonObject> SeamJson = MakeShared<FJsonObject>();
+		int32 WeldedStitchCount = 0;
+		for (const FIntVector2& Stitch2D : Seam.GetSeamStitch2DEndIndices())
+		{
+			if (Vertex3DLookup.IsValidIndex(Stitch2D.X) && Vertex3DLookup.IsValidIndex(Stitch2D.Y)
+				&& Vertex3DLookup[Stitch2D.X] != INDEX_NONE
+				&& Vertex3DLookup[Stitch2D.X] == Vertex3DLookup[Stitch2D.Y])
+			{
+				++WeldedStitchCount;
+			}
+		}
 		SeamJson->SetNumberField(TEXT("seam_index"), SeamIndex);
 		SeamJson->SetNumberField(TEXT("stitch_count"), Seam.GetNumSeamStitches());
 		SeamJson->SetNumberField(TEXT("stitch_offset"), Seam.GetSeamStitchesOffset());
+		SeamJson->SetNumberField(TEXT("welded_stitch_count"), WeldedStitchCount);
+		SeamJson->SetNumberField(TEXT("unwelded_stitch_count"), Seam.GetNumSeamStitches() - WeldedStitchCount);
+		SeamJson->SetNumberField(TEXT("weld_coverage"), Seam.GetNumSeamStitches() > 0 ? static_cast<double>(WeldedStitchCount) / Seam.GetNumSeamStitches() : 0.0);
 		StitchCount += Seam.GetNumSeamStitches();
 		SeamValues.Add(MakeShared<FJsonValueObject>(SeamJson));
 	}
@@ -593,13 +879,26 @@ TSharedPtr<FJsonObject> ChaosClothCollectionToJson(
 	}
 	LodJson->SetArrayField(TEXT("weight_maps"), WeightMaps);
 	LodJson->SetNumberField(TEXT("weight_map_count"), WeightMaps.Num());
+	if (GapTolerance >= 0.0f)
+	{
+		LodJson->SetObjectField(TEXT("seam_diagnostics"), BuildChaosClothGapDiagnostics(Cloth, GapTolerance, GapLimit));
+	}
+	if (bDumpWeights)
+	{
+		LodJson->SetObjectField(TEXT("weight_vertices"), DumpChaosClothWeightMapVertices(Cloth, DumpWeightMapName, WeightLimit));
+	}
 	return LodJson;
 }
 
 TSharedPtr<FJsonObject> ChaosClothAssetToJson(
 	UChaosClothAsset* Asset,
 	const FString& ClothAssetPath,
-	bool bIncludeNodes)
+	bool bIncludeNodes,
+	bool bDumpWeights = false,
+	FName DumpWeightMapName = FName(TEXT("MaxDistance")),
+	int32 WeightLimit = 0,
+	float GapTolerance = -1.0f,
+	int32 GapLimit = 0)
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
@@ -622,7 +921,7 @@ TSharedPtr<FJsonObject> ChaosClothAssetToJson(
 	const TArray<TSharedRef<const FManagedArrayCollection>>& Collections = Asset->GetClothCollections();
 	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
 	{
-		LodValues.Add(MakeShared<FJsonValueObject>(ChaosClothCollectionToJson(Collections[LodIndex], LodIndex)));
+		LodValues.Add(MakeShared<FJsonValueObject>(ChaosClothCollectionToJson(Collections[LodIndex], LodIndex, bDumpWeights, DumpWeightMapName, WeightLimit, GapTolerance, GapLimit)));
 	}
 	Result->SetArrayField(TEXT("lods"), LodValues);
 	Result->SetNumberField(TEXT("lod_count"), LodValues.Num());
@@ -852,6 +1151,158 @@ bool ParseJsonIntArrayField(
 		}
 		OutValues.Add(Index);
 	}
+	return true;
+}
+
+bool ParseJsonVector3Field(
+	const TSharedPtr<FJsonObject>& Arguments,
+	const FString& FieldName,
+	FVector3f& OutVector,
+	FString& OutError)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Arguments.IsValid() || !Arguments->TryGetArrayField(FieldName, Values) || !Values)
+	{
+		return false;
+	}
+	if (Values->Num() != 3)
+	{
+		OutError = FString::Printf(TEXT("%s must contain exactly three numbers"), *FieldName);
+		return false;
+	}
+	double Components[3] = { 0.0, 0.0, 0.0 };
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		if (!(*Values)[Index].IsValid() || !(*Values)[Index]->TryGetNumber(Components[Index]))
+		{
+			OutError = FString::Printf(TEXT("%s must contain exactly three numbers"), *FieldName);
+			return false;
+		}
+	}
+	OutVector = FVector3f(static_cast<float>(Components[0]), static_cast<float>(Components[1]), static_cast<float>(Components[2]));
+	return true;
+}
+
+bool SelectChaosWeightMapVertices(
+	const TSharedPtr<FJsonObject>& Arguments,
+	UE::Chaos::ClothAsset::FCollectionClothFacade& Cloth,
+	TArray<int32>& OutVertices,
+	FString& OutError)
+{
+	OutVertices.Reset();
+	TSet<int32> Selected;
+	TArray<int32> ExplicitVertices;
+	if (!ParseJsonIntArrayField(Arguments, TEXT("vertices"), false, ExplicitVertices, OutError))
+	{
+		return false;
+	}
+	for (int32 VertexIndex : ExplicitVertices)
+	{
+		if (VertexIndex < 0 || VertexIndex >= Cloth.GetNumSimVertices3D())
+		{
+			OutError = FString::Printf(TEXT("sim 3D vertex index %d is out of range"), VertexIndex);
+			return false;
+		}
+		Selected.Add(VertexIndex);
+	}
+
+	double ZMin = 0.0;
+	double ZMax = 0.0;
+	const bool bHasZMin = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_min"), ZMin);
+	const bool bHasZMax = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_max"), ZMax);
+	FVector3f Center = FVector3f::ZeroVector;
+	FString CenterError;
+	const bool bHasCenter = ParseJsonVector3Field(Arguments, TEXT("center"), Center, CenterError);
+	if (!CenterError.IsEmpty())
+	{
+		OutError = CenterError;
+		return false;
+	}
+	double Radius = 0.0;
+	const bool bHasRadius = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("radius"), Radius);
+	if (bHasCenter != bHasRadius)
+	{
+		OutError = TEXT("center and radius must be provided together");
+		return false;
+	}
+	if (bHasRadius && Radius < 0.0)
+	{
+		OutError = TEXT("radius must be non-negative");
+		return false;
+	}
+	if (bHasZMin && bHasZMax && ZMax < ZMin)
+	{
+		OutError = TEXT("z_max must be greater than or equal to z_min");
+		return false;
+	}
+
+	const bool bHasSpatialSelection = bHasZMin || bHasZMax || bHasCenter;
+	if (bHasSpatialSelection)
+	{
+		const TConstArrayView<FVector3f> Positions = Cloth.GetSimPosition3D();
+		const float RadiusSq = static_cast<float>(Radius * Radius);
+		for (int32 VertexIndex = 0; VertexIndex < Positions.Num(); ++VertexIndex)
+		{
+			const FVector3f& Position = Positions[VertexIndex];
+			if (bHasZMin && Position.Z < static_cast<float>(ZMin))
+			{
+				continue;
+			}
+			if (bHasZMax && Position.Z > static_cast<float>(ZMax))
+			{
+				continue;
+			}
+			if (bHasCenter && FVector3f::DistSquared(Position, Center) > RadiusSq)
+			{
+				continue;
+			}
+			Selected.Add(VertexIndex);
+		}
+	}
+
+	if (Selected.IsEmpty())
+	{
+		OutError = TEXT("selection did not match any simulation 3D vertices");
+		return false;
+	}
+	for (int32 VertexIndex : Selected)
+	{
+		OutVertices.Add(VertexIndex);
+	}
+	OutVertices.Sort();
+	return true;
+}
+
+bool SetWeightMap(
+	UE::Chaos::ClothAsset::FCollectionClothFacade& Cloth,
+	const FName& WeightMapName,
+	const TArray<int32>& Vertices,
+	float Value,
+	TArray<float>& OutBeforeValues,
+	TArray<float>& OutAfterValues,
+	FString& OutError)
+{
+	if (!Cloth.HasWeightMap(WeightMapName))
+	{
+		Cloth.AddWeightMap(WeightMapName);
+	}
+	TArrayView<float> WeightMapValues = Cloth.GetWeightMap(WeightMapName);
+	if (WeightMapValues.Num() < Cloth.GetNumSimVertices3D())
+	{
+		OutError = FString::Printf(TEXT("weight map %s has %d values for %d sim 3D vertices"), *WeightMapName.ToString(), WeightMapValues.Num(), Cloth.GetNumSimVertices3D());
+		return false;
+	}
+	OutBeforeValues = TArray<float>(WeightMapValues);
+	for (int32 VertexIndex : Vertices)
+	{
+		if (!WeightMapValues.IsValidIndex(VertexIndex))
+		{
+			OutError = FString::Printf(TEXT("sim 3D vertex index %d is out of range for weight map %s"), VertexIndex, *WeightMapName.ToString());
+			return false;
+		}
+		WeightMapValues[VertexIndex] = Value;
+	}
+	OutAfterValues = TArray<float>(WeightMapValues);
 	return true;
 }
 
@@ -1476,6 +1927,781 @@ bool BuildBoneDistanceFalloffValues(
 	return true;
 }
 
+struct FLegacyClothWeldResult
+{
+	int32 OriginalVertexCount = 0;
+	int32 FinalVertexCount = 0;
+	int32 SelectedVertexCount = 0;
+	int32 WeldedVertexCount = 0;
+	int32 WeldGroupCount = 0;
+	int32 RemovedDegenerateTriangleCount = 0;
+};
+
+struct FLegacyClothSectionMapping
+{
+	int32 MeshLodIndex = INDEX_NONE;
+	int32 SectionIndex = INDEX_NONE;
+	TArray<FMeshToMeshVertData> MappingData;
+};
+
+bool BuildLegacyClothWeldSelection(
+	const TSharedPtr<FJsonObject>& Arguments,
+	const FClothPhysicalMeshData& PhysicalMesh,
+	TArray<bool>& OutSelected,
+	FString& OutError)
+{
+	OutSelected.Init(false, PhysicalMesh.Vertices.Num());
+
+	double ZMin = 0.0;
+	double ZMax = 0.0;
+	const bool bHasZMin = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_min"), ZMin);
+	const bool bHasZMax = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_max"), ZMax);
+	FVector3f Center = FVector3f::ZeroVector;
+	FString CenterError;
+	const bool bHasCenter = ParseJsonVector3Field(Arguments, TEXT("center"), Center, CenterError);
+	if (!CenterError.IsEmpty())
+	{
+		OutError = CenterError;
+		return false;
+	}
+	double Radius = 0.0;
+	const bool bHasRadius = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("radius"), Radius);
+	if (bHasCenter != bHasRadius)
+	{
+		OutError = TEXT("center and radius must be provided together");
+		return false;
+	}
+	if (bHasRadius && Radius < 0.0)
+	{
+		OutError = TEXT("radius must be non-negative");
+		return false;
+	}
+	if (bHasZMin && bHasZMax && ZMax < ZMin)
+	{
+		OutError = TEXT("z_max must be greater than or equal to z_min");
+		return false;
+	}
+
+	const bool bHasSpatialSelection = bHasZMin || bHasZMax || bHasCenter;
+	const float RadiusSq = static_cast<float>(Radius * Radius);
+	for (int32 VertexIndex = 0; VertexIndex < PhysicalMesh.Vertices.Num(); ++VertexIndex)
+	{
+		const FVector3f& Position = PhysicalMesh.Vertices[VertexIndex];
+		bool bSelected = true;
+		if (bHasZMin && Position.Z < static_cast<float>(ZMin))
+		{
+			bSelected = false;
+		}
+		if (bHasZMax && Position.Z > static_cast<float>(ZMax))
+		{
+			bSelected = false;
+		}
+		if (bHasCenter && FVector3f::DistSquared(Position, Center) > RadiusSq)
+		{
+			bSelected = false;
+		}
+		OutSelected[VertexIndex] = bHasSpatialSelection ? bSelected : true;
+	}
+	return true;
+}
+
+void BuildExistingLegacyWeightMapValues(const FClothLODDataCommon& LodData, EWeightMapTargetCommon Target, TArray<float>& OutValues)
+{
+	const FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+	const int32 VertexCount = PhysicalMesh.Vertices.Num();
+	OutValues.Init(0.0f, VertexCount);
+#if WITH_EDITORONLY_DATA
+	bool bFoundPointWeightMap = false;
+	for (const FPointWeightMap& PointWeightMap : LodData.PointWeightMaps)
+	{
+		if (PointWeightMap.bEnabled
+			&& PointWeightMap.CurrentTarget == static_cast<uint8>(Target))
+		{
+			bFoundPointWeightMap = true;
+			for (int32 Index = 0; Index < VertexCount; ++Index)
+			{
+				if (PointWeightMap.Values.IsValidIndex(Index))
+				{
+					OutValues[Index] = PointWeightMap.Values[Index];
+				}
+			}
+		}
+	}
+	if (bFoundPointWeightMap)
+	{
+		return;
+	}
+#endif
+	const FPointWeightMap* ExistingWeightMap = PhysicalMesh.FindWeightMap(Target);
+	if (!ExistingWeightMap)
+	{
+		return;
+	}
+	for (int32 Index = 0; Index < VertexCount; ++Index)
+	{
+		if (ExistingWeightMap->Values.IsValidIndex(Index))
+		{
+			OutValues[Index] = ExistingWeightMap->Values[Index];
+		}
+	}
+}
+
+bool BuildSpatialWeightMapValues(
+	const TSharedPtr<FJsonObject>& Arguments,
+	const FClothLODDataCommon& LodData,
+	EWeightMapTargetCommon Target,
+	TArray<float>& OutValues,
+	int32& OutSelectedVertexCount,
+	FString& OutError)
+{
+	const FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+	OutSelectedVertexCount = 0;
+	BuildExistingLegacyWeightMapValues(LodData, Target, OutValues);
+
+	TArray<bool> SelectedVertices;
+	if (!BuildLegacyClothWeldSelection(Arguments, PhysicalMesh, SelectedVertices, OutError))
+	{
+		return false;
+	}
+	for (bool bSelected : SelectedVertices)
+	{
+		if (bSelected)
+		{
+			++OutSelectedVertexCount;
+		}
+	}
+	if (OutSelectedVertexCount == 0)
+	{
+		OutError = TEXT("cloth: spatial weight selection did not match any physical mesh vertices");
+		return false;
+	}
+
+	double ConstantValue = 0.0;
+	const bool bHasConstantValue = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("value"), ConstantValue);
+	double MinValue = 0.0;
+	double MaxValue = 0.0;
+	const bool bHasMinValue = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("min_value"), MinValue);
+	const bool bHasMaxValue = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("max_value"), MaxValue);
+	if (bHasConstantValue && (bHasMinValue || bHasMaxValue))
+	{
+		OutError = TEXT("cloth: spatial rule cannot combine value with min_value/max_value");
+		return false;
+	}
+	if (bHasMinValue != bHasMaxValue)
+	{
+		OutError = TEXT("cloth: spatial rule requires min_value and max_value together");
+		return false;
+	}
+	if (!bHasConstantValue && !bHasMinValue)
+	{
+		OutError = TEXT("cloth: spatial rule requires value or min_value/max_value");
+		return false;
+	}
+
+	if (bHasConstantValue)
+	{
+		for (int32 Index = 0; Index < SelectedVertices.Num(); ++Index)
+		{
+			if (SelectedVertices[Index])
+			{
+				OutValues[Index] = static_cast<float>(ConstantValue);
+			}
+		}
+		return true;
+	}
+
+	FString Curve = TEXT("linear");
+	if (Arguments.IsValid())
+	{
+		Arguments->TryGetStringField(TEXT("curve"), Curve);
+	}
+	if (!IsSupportedFalloffCurve(Curve))
+	{
+		OutError = TEXT("cloth: curve must be linear, smooth, or ease");
+		return false;
+	}
+	double ExplicitZMin = 0.0;
+	double ExplicitZMax = 0.0;
+	const bool bHasZMin = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_min"), ExplicitZMin);
+	const bool bHasZMax = Arguments.IsValid() && Arguments->TryGetNumberField(TEXT("z_max"), ExplicitZMax);
+
+	float RampZMin = 0.0f;
+	float RampZMax = 0.0f;
+	bool bFoundRampRange = false;
+	if (bHasZMin && bHasZMax)
+	{
+		RampZMin = static_cast<float>(ExplicitZMin);
+		RampZMax = static_cast<float>(ExplicitZMax);
+		bFoundRampRange = true;
+	}
+	else
+	{
+		for (int32 Index = 0; Index < SelectedVertices.Num(); ++Index)
+		{
+			if (!SelectedVertices[Index])
+			{
+				continue;
+			}
+			const float Z = PhysicalMesh.Vertices[Index].Z;
+			if (!bFoundRampRange)
+			{
+				RampZMin = Z;
+				RampZMax = Z;
+				bFoundRampRange = true;
+			}
+			else
+			{
+				RampZMin = FMath::Min(RampZMin, Z);
+				RampZMax = FMath::Max(RampZMax, Z);
+			}
+		}
+	}
+
+	const float RampRange = RampZMax - RampZMin;
+	if (FMath::IsNearlyZero(RampRange))
+	{
+		OutError = TEXT("cloth: spatial ramp requires a non-zero Z range");
+		return false;
+	}
+
+	for (int32 Index = 0; Index < SelectedVertices.Num(); ++Index)
+	{
+		if (!SelectedVertices[Index])
+		{
+			continue;
+		}
+		float Alpha = (PhysicalMesh.Vertices[Index].Z - RampZMin) / RampRange;
+		Alpha = ApplyFalloffCurve(Alpha, Curve);
+		OutValues[Index] = FMath::Lerp(static_cast<float>(MinValue), static_cast<float>(MaxValue), Alpha);
+	}
+	return true;
+}
+
+void ApplyLegacyWeightMapToLodData(FClothLODDataCommon& LodData, const TArray<float>& Values, EWeightMapTargetCommon Target)
+{
+	FPointWeightMap& PhysicalWeightMap = LodData.PhysicalMeshData.FindOrAddWeightMap(Target);
+	PhysicalWeightMap.Values = Values;
+	ConfigureWeightMapMetadata(PhysicalWeightMap, Target);
+
+#if WITH_EDITORONLY_DATA
+	for (int32 Index = LodData.PointWeightMaps.Num() - 1; Index >= 0; --Index)
+	{
+		if (LodData.PointWeightMaps[Index].CurrentTarget == static_cast<uint8>(Target))
+		{
+			LodData.PointWeightMaps.RemoveAt(Index);
+		}
+	}
+	FPointWeightMap* PointWeightMap = &LodData.PointWeightMaps.AddDefaulted_GetRef();
+	PointWeightMap->Values = Values;
+	ConfigureWeightMapMetadata(*PointWeightMap, Target);
+#endif
+	LodData.PushWeightsToMesh();
+}
+
+void RemapLegacyClothWeightMaps(
+	TMap<uint32, FPointWeightMap>& WeightMaps,
+	const TArray<TArray<int32>>& NewVertexToOldVertices)
+{
+	for (TPair<uint32, FPointWeightMap>& Pair : WeightMaps)
+	{
+		const TArray<float> OldValues = Pair.Value.Values;
+		TArray<float> NewValues;
+		NewValues.SetNum(NewVertexToOldVertices.Num());
+		for (int32 NewIndex = 0; NewIndex < NewVertexToOldVertices.Num(); ++NewIndex)
+		{
+			float Value = 0.0f;
+			bool bHasValue = false;
+			for (int32 OldIndex : NewVertexToOldVertices[NewIndex])
+			{
+				if (!OldValues.IsValidIndex(OldIndex))
+				{
+					continue;
+				}
+				Value = bHasValue ? FMath::Min(Value, OldValues[OldIndex]) : OldValues[OldIndex];
+				bHasValue = true;
+			}
+			NewValues[NewIndex] = Value;
+		}
+		Pair.Value.Values = MoveTemp(NewValues);
+	}
+}
+
+void RemapLegacyClothPointWeightMaps(
+	TArray<FPointWeightMap>& PointWeightMaps,
+	const TArray<TArray<int32>>& NewVertexToOldVertices)
+{
+	for (FPointWeightMap& WeightMap : PointWeightMaps)
+	{
+		const TArray<float> OldValues = WeightMap.Values;
+		TArray<float> NewValues;
+		NewValues.SetNum(NewVertexToOldVertices.Num());
+		for (int32 NewIndex = 0; NewIndex < NewVertexToOldVertices.Num(); ++NewIndex)
+		{
+			float Value = 0.0f;
+			bool bHasValue = false;
+			for (int32 OldIndex : NewVertexToOldVertices[NewIndex])
+			{
+				if (!OldValues.IsValidIndex(OldIndex))
+				{
+					continue;
+				}
+				Value = bHasValue ? FMath::Min(Value, OldValues[OldIndex]) : OldValues[OldIndex];
+				bHasValue = true;
+			}
+			NewValues[NewIndex] = Value;
+		}
+		WeightMap.Values = MoveTemp(NewValues);
+	}
+}
+
+void RestorePhysicalOnlyLegacyClothWeightMaps(
+	FClothPhysicalMeshData& PhysicalMesh,
+	const TMap<uint32, FPointWeightMap>& RemappedWeightMaps)
+{
+	for (const TPair<uint32, FPointWeightMap>& Pair : RemappedWeightMaps)
+	{
+		if (!PhysicalMesh.WeightMaps.Contains(Pair.Key))
+		{
+			PhysicalMesh.WeightMaps.Add(Pair.Key, Pair.Value);
+		}
+	}
+}
+
+bool WeldLegacyPhysicalMeshVertices(
+	FClothLODDataCommon& LodData,
+	float Tolerance,
+	const TArray<bool>& SelectedVertices,
+	FLegacyClothWeldResult& OutResult,
+	FString& OutError)
+{
+	FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+	const int32 VertexCount = PhysicalMesh.Vertices.Num();
+	OutResult.OriginalVertexCount = VertexCount;
+	OutResult.FinalVertexCount = VertexCount;
+	if (VertexCount <= 0)
+	{
+		OutError = TEXT("cloth: physical mesh has no vertices");
+		return false;
+	}
+	if (SelectedVertices.Num() != VertexCount)
+	{
+		OutError = TEXT("cloth: weld selection does not match physical mesh vertex count");
+		return false;
+	}
+
+	TArray<int32> Parent;
+	Parent.SetNum(VertexCount);
+	for (int32 Index = 0; Index < VertexCount; ++Index)
+	{
+		Parent[Index] = Index;
+		if (SelectedVertices[Index])
+		{
+			++OutResult.SelectedVertexCount;
+		}
+	}
+	if (OutResult.SelectedVertexCount == 0)
+	{
+		OutError = TEXT("cloth: weld selection did not match any physical mesh vertices");
+		return false;
+	}
+
+	auto FindRoot = [&Parent](int32 Index)
+	{
+		int32 Root = Index;
+		while (Parent[Root] != Root)
+		{
+			Root = Parent[Root];
+		}
+		while (Parent[Index] != Index)
+		{
+			const int32 Next = Parent[Index];
+			Parent[Index] = Root;
+			Index = Next;
+		}
+		return Root;
+	};
+	auto UnionVertices = [&Parent, &FindRoot](int32 A, int32 B)
+	{
+		const int32 RootA = FindRoot(A);
+		const int32 RootB = FindRoot(B);
+		if (RootA == RootB)
+		{
+			return;
+		}
+		const int32 NewRoot = FMath::Min(RootA, RootB);
+		Parent[RootA] = NewRoot;
+		Parent[RootB] = NewRoot;
+	};
+
+	const float ToleranceSq = FMath::Square(Tolerance);
+	const float CellSize = FMath::Max(Tolerance, KINDA_SMALL_NUMBER);
+	TMap<FIntVector, TArray<int32>> SpatialBuckets;
+	auto MakeBucket = [CellSize](const FVector3f& Position)
+	{
+		return FIntVector(
+			FMath::FloorToInt(Position.X / CellSize),
+			FMath::FloorToInt(Position.Y / CellSize),
+			FMath::FloorToInt(Position.Z / CellSize));
+	};
+
+	for (int32 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+	{
+		if (!SelectedVertices[VertexIndex])
+		{
+			continue;
+		}
+		const FIntVector Bucket = MakeBucket(PhysicalMesh.Vertices[VertexIndex]);
+		for (int32 X = -1; X <= 1; ++X)
+		{
+			for (int32 Y = -1; Y <= 1; ++Y)
+			{
+				for (int32 Z = -1; Z <= 1; ++Z)
+				{
+					const FIntVector NeighborBucket(Bucket.X + X, Bucket.Y + Y, Bucket.Z + Z);
+					if (const TArray<int32>* Candidates = SpatialBuckets.Find(NeighborBucket))
+					{
+						for (int32 CandidateIndex : *Candidates)
+						{
+							if (FVector3f::DistSquared(PhysicalMesh.Vertices[VertexIndex], PhysicalMesh.Vertices[CandidateIndex]) <= ToleranceSq)
+							{
+								UnionVertices(VertexIndex, CandidateIndex);
+							}
+						}
+					}
+				}
+			}
+		}
+		SpatialBuckets.FindOrAdd(Bucket).Add(VertexIndex);
+	}
+
+	TMap<int32, TArray<int32>> RootToOldVertices;
+	for (int32 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+	{
+		RootToOldVertices.FindOrAdd(FindRoot(VertexIndex)).Add(VertexIndex);
+	}
+
+	TArray<int32> SortedRoots;
+	RootToOldVertices.GetKeys(SortedRoots);
+	SortedRoots.Sort();
+
+	TMap<int32, int32> RootToNewVertex;
+	TArray<TArray<int32>> NewVertexToOldVertices;
+	TArray<int32> OldToNewVertex;
+	OldToNewVertex.SetNum(VertexCount);
+	for (int32 NewIndex = 0; NewIndex < SortedRoots.Num(); ++NewIndex)
+	{
+		const int32 Root = SortedRoots[NewIndex];
+		RootToNewVertex.Add(Root, NewIndex);
+		NewVertexToOldVertices.Add(RootToOldVertices[Root]);
+		if (NewVertexToOldVertices.Last().Num() > 1)
+		{
+			++OutResult.WeldGroupCount;
+		}
+		for (int32 OldIndex : NewVertexToOldVertices.Last())
+		{
+			OldToNewVertex[OldIndex] = NewIndex;
+		}
+	}
+
+	if (OutResult.WeldGroupCount == 0)
+	{
+		return true;
+	}
+
+	TArray<FVector3f> NewVertices;
+	TArray<FVector3f> NewNormals;
+	TArray<FClothVertBoneData> NewBoneData;
+	TArray<float> NewInverseMasses;
+#if WITH_EDITORONLY_DATA
+	TArray<FColor> NewVertexColors;
+#endif
+	NewVertices.SetNum(NewVertexToOldVertices.Num());
+	NewNormals.SetNum(NewVertexToOldVertices.Num());
+	NewBoneData.SetNum(NewVertexToOldVertices.Num());
+	NewInverseMasses.SetNum(NewVertexToOldVertices.Num());
+#if WITH_EDITORONLY_DATA
+	NewVertexColors.SetNum(PhysicalMesh.VertexColors.Num() == VertexCount ? NewVertexToOldVertices.Num() : 0);
+#endif
+
+	for (int32 NewIndex = 0; NewIndex < NewVertexToOldVertices.Num(); ++NewIndex)
+	{
+		const int32 RepresentativeIndex = NewVertexToOldVertices[NewIndex][0];
+		NewVertices[NewIndex] = PhysicalMesh.Vertices[RepresentativeIndex];
+		NewNormals[NewIndex] = PhysicalMesh.Normals.IsValidIndex(RepresentativeIndex) ? PhysicalMesh.Normals[RepresentativeIndex] : FVector3f::UnitZ();
+		NewBoneData[NewIndex] = PhysicalMesh.BoneData.IsValidIndex(RepresentativeIndex) ? PhysicalMesh.BoneData[RepresentativeIndex] : FClothVertBoneData();
+		NewInverseMasses[NewIndex] = PhysicalMesh.InverseMasses.IsValidIndex(RepresentativeIndex) ? PhysicalMesh.InverseMasses[RepresentativeIndex] : 0.0f;
+#if WITH_EDITORONLY_DATA
+		if (NewVertexColors.Num() > 0)
+		{
+			NewVertexColors[NewIndex] = PhysicalMesh.VertexColors[RepresentativeIndex];
+		}
+#endif
+	}
+
+	TArray<uint32> NewIndices;
+	if (PhysicalMesh.Indices.Num() % 3 != 0)
+	{
+		OutError = TEXT("cloth: physical mesh index count is not divisible by 3");
+		return false;
+	}
+	for (int32 Index = 0; Index < PhysicalMesh.Indices.Num(); Index += 3)
+	{
+		const int32 OldA = static_cast<int32>(PhysicalMesh.Indices[Index + 0]);
+		const int32 OldB = static_cast<int32>(PhysicalMesh.Indices[Index + 1]);
+		const int32 OldC = static_cast<int32>(PhysicalMesh.Indices[Index + 2]);
+		if (!OldToNewVertex.IsValidIndex(OldA) || !OldToNewVertex.IsValidIndex(OldB) || !OldToNewVertex.IsValidIndex(OldC))
+		{
+			OutError = TEXT("cloth: physical mesh contains an out-of-range index buffer reference");
+			return false;
+		}
+		const int32 A = OldToNewVertex[OldA];
+		const int32 B = OldToNewVertex[OldB];
+		const int32 C = OldToNewVertex[OldC];
+		if (A == B || B == C || A == C)
+		{
+			++OutResult.RemovedDegenerateTriangleCount;
+			continue;
+		}
+		NewIndices.Add(static_cast<uint32>(A));
+		NewIndices.Add(static_cast<uint32>(B));
+		NewIndices.Add(static_cast<uint32>(C));
+	}
+	if (NewIndices.Num() == 0)
+	{
+		OutError = TEXT("cloth: weld removed all physical mesh triangles");
+		return false;
+	}
+
+	TSet<int32> NewSelfCollisionVertices;
+	for (int32 OldIndex : PhysicalMesh.SelfCollisionVertexSet)
+	{
+		if (OldToNewVertex.IsValidIndex(OldIndex))
+		{
+			NewSelfCollisionVertices.Add(OldToNewVertex[OldIndex]);
+		}
+	}
+
+	PhysicalMesh.Vertices = MoveTemp(NewVertices);
+	PhysicalMesh.Normals = MoveTemp(NewNormals);
+	PhysicalMesh.BoneData = MoveTemp(NewBoneData);
+	PhysicalMesh.InverseMasses = MoveTemp(NewInverseMasses);
+#if WITH_EDITORONLY_DATA
+	PhysicalMesh.VertexColors = MoveTemp(NewVertexColors);
+#endif
+	PhysicalMesh.Indices = MoveTemp(NewIndices);
+	PhysicalMesh.SelfCollisionVertexSet = MoveTemp(NewSelfCollisionVertices);
+	RemapLegacyClothWeightMaps(PhysicalMesh.WeightMaps, NewVertexToOldVertices);
+#if WITH_EDITORONLY_DATA
+	RemapLegacyClothPointWeightMaps(LodData.PointWeightMaps, NewVertexToOldVertices);
+#endif
+	PhysicalMesh.CalculateInverseMasses();
+	PhysicalMesh.CalculateNumInfluences();
+
+	OutResult.FinalVertexCount = PhysicalMesh.Vertices.Num();
+	OutResult.WeldedVertexCount = OutResult.OriginalVertexCount - OutResult.FinalVertexCount;
+	return true;
+}
+
+bool BuildLegacyRenderMeshDescForSection(
+	const FSkeletalMeshLODModel& LodModel,
+	const FSkelMeshSection& Section,
+	TArray<FVector3f>& OutPositions,
+	TArray<FVector3f>& OutNormals,
+	TArray<FVector3f>& OutTangents,
+	TArray<uint32>& OutIndices,
+	FString& OutError)
+{
+	OutPositions.Reset();
+	OutNormals.Reset();
+	OutTangents.Reset();
+	OutIndices.Reset();
+	OutPositions.Reserve(Section.SoftVertices.Num());
+	OutNormals.Reserve(Section.SoftVertices.Num());
+	OutTangents.Reserve(Section.SoftVertices.Num());
+	for (const FSoftSkinVertex& Vertex : Section.SoftVertices)
+	{
+		OutPositions.Add(Vertex.Position);
+		OutNormals.Add(Vertex.TangentZ);
+		OutTangents.Add(Vertex.TangentX);
+	}
+	for (uint32 SectionIndexOffset = 0; SectionIndexOffset < Section.NumTriangles * 3; ++SectionIndexOffset)
+	{
+		if (!LodModel.IndexBuffer.IsValidIndex(Section.BaseIndex + SectionIndexOffset))
+		{
+			OutError = TEXT("cloth: bound section has an out-of-range base index");
+			return false;
+		}
+		const int32 SourceLocalVertexIndex =
+			static_cast<int32>(LodModel.IndexBuffer[Section.BaseIndex + SectionIndexOffset]) - static_cast<int32>(Section.BaseVertexIndex);
+		if (!OutPositions.IsValidIndex(SourceLocalVertexIndex))
+		{
+			OutError = TEXT("cloth: bound section has an out-of-range index buffer reference");
+			return false;
+		}
+		OutIndices.Add(static_cast<uint32>(SourceLocalVertexIndex));
+	}
+	if (OutPositions.Num() == 0 || OutIndices.Num() == 0)
+	{
+		OutError = TEXT("cloth: bound section has no render geometry");
+		return false;
+	}
+	return true;
+}
+
+bool GenerateLegacyClothRenderMappings(
+	USkeletalMesh* Mesh,
+	const UClothingAssetCommon* Asset,
+	const FClothLODDataCommon& ClothLodData,
+	int32 ClothLodIndex,
+	int32 SectionIndexFilter,
+	TArray<FLegacyClothSectionMapping>& OutMappings,
+	FString& OutError)
+{
+	OutMappings.Reset();
+	if (!Mesh || !Mesh->GetImportedModel())
+	{
+		OutError = TEXT("cloth: skeletal mesh has no imported model");
+		return false;
+	}
+	if (!Asset || !Asset->LodData.IsValidIndex(ClothLodIndex))
+	{
+		OutError = TEXT("cloth: clothing asset has no editable cloth LOD");
+		return false;
+	}
+	if (ClothLodData.PhysicalMeshData.Vertices.Num() == 0 || ClothLodData.PhysicalMeshData.Indices.Num() == 0)
+	{
+		OutError = TEXT("cloth: physical mesh has no source geometry for render mapping");
+		return false;
+	}
+	if (ClothLodData.PhysicalMeshData.Indices.Num() % 3 != 0)
+	{
+		OutError = TEXT("cloth: physical mesh index count is not divisible by 3");
+		return false;
+	}
+	const ClothingMeshUtils::ClothMeshDesc SourceMesh(
+		ClothLodData.PhysicalMeshData.Vertices,
+		ClothLodData.PhysicalMeshData.Indices);
+	const FPointWeightMap* const MaxDistances =
+		ClothLodData.PhysicalMeshData.FindWeightMap(EWeightMapTargetCommon::MaxDistance);
+
+	TIndirectArray<FSkeletalMeshLODModel>& LODModels = Mesh->GetImportedModel()->LODModels;
+	for (int32 MeshLodIndex = 0; MeshLodIndex < LODModels.Num(); ++MeshLodIndex)
+	{
+		FSkeletalMeshLODModel& LodModel = LODModels[MeshLodIndex];
+		for (int32 SectionIndex = 0; SectionIndex < LodModel.Sections.Num(); ++SectionIndex)
+		{
+			if (SectionIndexFilter != INDEX_NONE && SectionIndex != SectionIndexFilter)
+			{
+				continue;
+			}
+			FSkelMeshSection& Section = LodModel.Sections[SectionIndex];
+			if (Section.ClothingData.AssetGuid != Asset->GetAssetGuid()
+				|| Section.ClothingData.AssetLodIndex != ClothLodIndex)
+			{
+				continue;
+			}
+
+			TArray<FVector3f> RenderPositions;
+			TArray<FVector3f> RenderNormals;
+			TArray<FVector3f> RenderTangents;
+			TArray<uint32> RenderIndices;
+			if (!BuildLegacyRenderMeshDescForSection(
+				LodModel,
+				Section,
+				RenderPositions,
+				RenderNormals,
+				RenderTangents,
+				RenderIndices,
+				OutError))
+			{
+				return false;
+			}
+
+			const ClothingMeshUtils::ClothMeshDesc TargetMesh(RenderPositions, RenderNormals, RenderTangents, RenderIndices);
+			TArray<FMeshToMeshVertData> MappingData;
+			ClothingMeshUtils::GenerateMeshToMeshVertData(
+				MappingData,
+				TargetMesh,
+				SourceMesh,
+				MaxDistances,
+				ClothLodData.bSmoothTransition,
+				ClothLodData.bUseMultipleInfluences,
+				ClothLodData.SkinningKernelRadius);
+			if (MappingData.Num() != RenderPositions.Num())
+			{
+				OutError = FString::Printf(
+					TEXT("cloth: generated render mapping for section_index %d has %d entries for %d render vertices"),
+					SectionIndex,
+					MappingData.Num(),
+					RenderPositions.Num());
+				return false;
+			}
+			FLegacyClothSectionMapping& Generated = OutMappings.AddDefaulted_GetRef();
+			Generated.MeshLodIndex = MeshLodIndex;
+			Generated.SectionIndex = SectionIndex;
+			Generated.MappingData = MoveTemp(MappingData);
+		}
+	}
+
+	if (SectionIndexFilter != INDEX_NONE && OutMappings.Num() == 0)
+	{
+		OutError = FString::Printf(TEXT("cloth: section_index %d is not bound to clothing asset LOD %d"), SectionIndexFilter, ClothLodIndex);
+		return false;
+	}
+	if (OutMappings.Num() == 0)
+	{
+		OutError = FString::Printf(TEXT("cloth: no skeletal mesh sections are bound to clothing asset LOD %d"), ClothLodIndex);
+		return false;
+	}
+	return true;
+}
+
+int32 CountLegacyClothBoundSections(USkeletalMesh* Mesh, const UClothingAssetCommon* Asset, int32 ClothLodIndex)
+{
+	if (!Mesh || !Mesh->GetImportedModel() || !Asset)
+	{
+		return 0;
+	}
+	int32 BoundSectionCount = 0;
+	const TIndirectArray<FSkeletalMeshLODModel>& LODModels = Mesh->GetImportedModel()->LODModels;
+	for (const FSkeletalMeshLODModel& LodModel : LODModels)
+	{
+		for (const FSkelMeshSection& Section : LodModel.Sections)
+		{
+			if (Section.ClothingData.AssetGuid == Asset->GetAssetGuid()
+				&& Section.ClothingData.AssetLodIndex == ClothLodIndex)
+			{
+				++BoundSectionCount;
+			}
+		}
+	}
+	return BoundSectionCount;
+}
+
+void ApplyLegacyClothRenderMappings(
+	USkeletalMesh* Mesh,
+	UClothingAssetCommon* Asset,
+	const TArray<FLegacyClothSectionMapping>& Mappings,
+	bool bUpdateLodBiasMappings)
+{
+	TIndirectArray<FSkeletalMeshLODModel>& LODModels = Mesh->GetImportedModel()->LODModels;
+	for (const FLegacyClothSectionMapping& Mapping : Mappings)
+	{
+		if (!LODModels.IsValidIndex(Mapping.MeshLodIndex)
+			|| !LODModels[Mapping.MeshLodIndex].Sections.IsValidIndex(Mapping.SectionIndex))
+		{
+			continue;
+		}
+		FSkelMeshSection& Section = LODModels[Mapping.MeshLodIndex].Sections[Mapping.SectionIndex];
+		Section.ClothMappingDataLODs.SetNum(1);
+		Section.ClothMappingDataLODs[0] = Mapping.MappingData;
+	}
+	if (bUpdateLodBiasMappings)
+	{
+		Asset->UpdateAllLODBiasMappings(Mesh);
+	}
+}
+
 FBridgeToolResult LoadMeshAndAsset(
 	const TSharedPtr<FJsonObject>& Arguments,
 	USkeletalMesh*& OutMesh,
@@ -1560,6 +2786,11 @@ TMap<FString, FBridgeSchemaProperty> UClothChaosQueryTool::GetInputSchema() cons
 	TMap<FString, FBridgeSchemaProperty> Schema;
 	Schema.Add(TEXT("cloth_asset"), ClothSchemaProperty(TEXT("string"), TEXT("Chaos Cloth Asset path"), true));
 	Schema.Add(TEXT("include_nodes"), ClothSchemaProperty(TEXT("boolean"), TEXT("Include Dataflow graph/node metadata when available")));
+	Schema.Add(TEXT("gap_tolerance"), ClothSchemaProperty(TEXT("number"), TEXT("Report unwelded near-vertex gap candidates within this distance")));
+	Schema.Add(TEXT("gap_limit"), ClothSchemaProperty(TEXT("integer"), TEXT("Maximum gap candidates to return")));
+	Schema.Add(TEXT("dump_weights"), ClothSchemaProperty(TEXT("boolean"), TEXT("Include per-simulation-vertex weight map values")));
+	Schema.Add(TEXT("weight_map"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map name for per-vertex dumps")));
+	Schema.Add(TEXT("weight_limit"), ClothSchemaProperty(TEXT("integer"), TEXT("Maximum per-vertex weight entries to return")));
 	return Schema;
 }
 
@@ -1573,9 +2804,22 @@ FBridgeToolResult UClothChaosQueryTool::Execute(const TSharedPtr<FJsonObject>& A
 	(void)Context;
 	const FString ClothAssetPath = GetStringArgOrDefault(Arguments, TEXT("cloth_asset"));
 	const bool bIncludeNodes = GetBoolArgOrDefault(Arguments, TEXT("include_nodes"), false);
+	const bool bDumpWeights = GetBoolArgOrDefault(Arguments, TEXT("dump_weights"), false);
+	const FName WeightMapName(*GetStringArgOrDefault(Arguments, TEXT("weight_map"), TEXT("MaxDistance")));
+	const int32 WeightLimit = GetIntArgOrDefault(Arguments, TEXT("weight_limit"), 0);
+	const int32 GapLimit = GetIntArgOrDefault(Arguments, TEXT("gap_limit"), 0);
+	double GapToleranceNumber = -1.0;
+	if (Arguments.IsValid())
+	{
+		Arguments->TryGetNumberField(TEXT("gap_tolerance"), GapToleranceNumber);
+	}
 	if (ClothAssetPath.IsEmpty())
 	{
 		return FBridgeToolResult::Error(TEXT("cloth_asset is required"));
+	}
+	if (GapToleranceNumber < 0.0 && !FMath::IsNearlyEqual(GapToleranceNumber, -1.0))
+	{
+		return FBridgeToolResult::Error(TEXT("gap_tolerance must be non-negative"));
 	}
 
 	FString LoadError;
@@ -1585,7 +2829,7 @@ FBridgeToolResult UClothChaosQueryTool::Execute(const TSharedPtr<FJsonObject>& A
 		return FBridgeToolResult::Error(LoadError.IsEmpty() ? FString::Printf(TEXT("cloth chaos-query: asset is not a UChaosClothAsset: %s"), *ClothAssetPath) : LoadError);
 	}
 
-	return FBridgeToolResult::Json(ChaosClothAssetToJson(Asset, ClothAssetPath, bIncludeNodes));
+	return FBridgeToolResult::Json(ChaosClothAssetToJson(Asset, ClothAssetPath, bIncludeNodes, bDumpWeights, WeightMapName, WeightLimit, static_cast<float>(GapToleranceNumber), GapLimit));
 }
 
 FString UClothConvertTool::GetToolDescription() const
@@ -1724,6 +2968,7 @@ TMap<FString, FBridgeSchemaProperty> UClothChaosStitchTool::GetInputSchema() con
 	Schema.Add(TEXT("first_vertices"), ClothSchemaProperty(TEXT("array"), TEXT("First boundary vertex indices for mode=proximity")));
 	Schema.Add(TEXT("second_vertices"), ClothSchemaProperty(TEXT("array"), TEXT("Second boundary vertex indices for mode=proximity")));
 	Schema.Add(TEXT("tolerance"), ClothSchemaProperty(TEXT("number"), TEXT("Maximum pairing distance for mode=proximity")));
+	Schema.Add(TEXT("dry_run"), ClothSchemaProperty(TEXT("boolean"), TEXT("Report candidate stitch pairs without mutation")));
 	Schema.Add(TEXT("save"), ClothSchemaProperty(TEXT("boolean"), TEXT("Save the Chaos Cloth Asset after mutation")));
 	return Schema;
 }
@@ -1739,6 +2984,7 @@ FBridgeToolResult UClothChaosStitchTool::Execute(const TSharedPtr<FJsonObject>& 
 	const FString ClothAssetPath = GetStringArgOrDefault(Arguments, TEXT("cloth_asset"));
 	const int32 LodIndex = GetIntArgOrDefault(Arguments, TEXT("lod_index"), 0);
 	const bool bSave = GetBoolArgOrDefault(Arguments, TEXT("save"), false);
+	const bool bDryRun = GetBoolArgOrDefault(Arguments, TEXT("dry_run"), false);
 	if (ClothAssetPath.IsEmpty())
 	{
 		return FBridgeToolResult::Error(TEXT("cloth_asset is required"));
@@ -1770,6 +3016,27 @@ FBridgeToolResult UClothChaosStitchTool::Execute(const TSharedPtr<FJsonObject>& 
 	if (!BuildChaosStitchPairs(Arguments, Cloth, StitchPairs, Error))
 	{
 		return FBridgeToolResult::Error(Error);
+	}
+	if (bDryRun)
+	{
+		const FString IndexSpace = GetStringArgOrDefault(Arguments, TEXT("index_space"), TEXT("2d"));
+		TArray<TSharedPtr<FJsonValue>> CandidatePairs;
+		for (const FIntVector2& Pair : StitchPairs)
+		{
+			CandidatePairs.Add(MakeShared<FJsonValueObject>(BuildChaosStitchPairJson(Cloth, Pair, IndexSpace)));
+		}
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("success"), true);
+		Result->SetBoolField(TEXT("dry_run"), true);
+		Result->SetStringField(TEXT("cloth_asset"), ClothAssetPath);
+		Result->SetNumberField(TEXT("lod_index"), LodIndex);
+		Result->SetStringField(TEXT("index_space"), IndexSpace);
+		Result->SetStringField(TEXT("mode"), GetStringArgOrDefault(Arguments, TEXT("mode"), TEXT("pairs")));
+		Result->SetArrayField(TEXT("candidate_pairs"), CandidatePairs);
+		Result->SetNumberField(TEXT("candidate_pair_count"), CandidatePairs.Num());
+		Result->SetBoolField(TEXT("saved"), false);
+		Result->SetBoolField(TEXT("mutated"), false);
+		return FBridgeToolResult::Json(Result);
 	}
 
 	TSharedPtr<FScopedTransaction> Transaction = FBridgeAssetModifier::BeginTransaction(
@@ -1904,6 +3171,115 @@ FBridgeToolResult UClothChaosSetConfigTool::Execute(const TSharedPtr<FJsonObject
 	Result->SetNumberField(TEXT("lod_index"), LodIndex);
 	Result->SetArrayField(TEXT("changed_properties"), Changed);
 	Result->SetNumberField(TEXT("changed_property_count"), Changed.Num());
+
+	FString SaveError;
+	if (!SaveChaosClothAssetIfRequested(Asset, bSave, Result, SaveError))
+	{
+		return FBridgeToolResult::Error(SaveError);
+	}
+	return FBridgeToolResult::Json(Result);
+}
+
+FString UClothChaosSetWeightMapTool::GetToolDescription() const
+{
+	return TEXT("Set Chaos Cloth Asset weight map values by simulation vertex index or spatial selection.");
+}
+
+TMap<FString, FBridgeSchemaProperty> UClothChaosSetWeightMapTool::GetInputSchema() const
+{
+	TMap<FString, FBridgeSchemaProperty> Schema;
+	Schema.Add(TEXT("cloth_asset"), ClothSchemaProperty(TEXT("string"), TEXT("Chaos Cloth Asset path"), true));
+	Schema.Add(TEXT("lod_index"), ClothSchemaProperty(TEXT("integer"), TEXT("Chaos Cloth Asset LOD index")));
+	Schema.Add(TEXT("weight_map"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map name")));
+	Schema.Add(TEXT("vertices"), ClothSchemaProperty(TEXT("array"), TEXT("Simulation 3D vertex indices to edit")));
+	Schema.Add(TEXT("z_min"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z greater than or equal to this value")));
+	Schema.Add(TEXT("z_max"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z less than or equal to this value")));
+	Schema.Add(TEXT("center"), ClothSchemaProperty(TEXT("array"), TEXT("Sphere center [X, Y, Z] for spatial selection")));
+	Schema.Add(TEXT("radius"), ClothSchemaProperty(TEXT("number"), TEXT("Sphere radius for spatial selection")));
+	Schema.Add(TEXT("value"), ClothSchemaProperty(TEXT("number"), TEXT("Weight map value to assign"), true));
+	Schema.Add(TEXT("save"), ClothSchemaProperty(TEXT("boolean"), TEXT("Save the Chaos Cloth Asset after mutation")));
+	return Schema;
+}
+
+TArray<FString> UClothChaosSetWeightMapTool::GetRequiredParams() const
+{
+	return { TEXT("cloth_asset"), TEXT("value") };
+}
+
+FBridgeToolResult UClothChaosSetWeightMapTool::Execute(const TSharedPtr<FJsonObject>& Arguments, const FBridgeToolContext& Context)
+{
+	(void)Context;
+	const FString ClothAssetPath = GetStringArgOrDefault(Arguments, TEXT("cloth_asset"));
+	const int32 LodIndex = GetIntArgOrDefault(Arguments, TEXT("lod_index"), 0);
+	const FName WeightMapName(*GetStringArgOrDefault(Arguments, TEXT("weight_map"), TEXT("MaxDistance")));
+	const bool bSave = GetBoolArgOrDefault(Arguments, TEXT("save"), false);
+	float Value = 0.0f;
+	if (ClothAssetPath.IsEmpty())
+	{
+		return FBridgeToolResult::Error(TEXT("cloth_asset is required"));
+	}
+	if (!GetFloatArg(Arguments, TEXT("value"), Value))
+	{
+		return FBridgeToolResult::Error(TEXT("value is required"));
+	}
+
+	FString LoadError;
+	UChaosClothAsset* Asset = FBridgeAssetModifier::LoadAssetByPath<UChaosClothAsset>(ClothAssetPath, LoadError);
+	if (!Asset)
+	{
+		return FBridgeToolResult::Error(LoadError.IsEmpty() ? FString::Printf(TEXT("cloth-chaos-set-weightmap: asset is not a UChaosClothAsset: %s"), *ClothAssetPath) : LoadError);
+	}
+
+	TArray<TSharedRef<const FManagedArrayCollection>> Collections;
+	TSharedPtr<FManagedArrayCollection> MutableCollection;
+	FString Error;
+	if (!CloneChaosClothCollectionsForLod(Asset, LodIndex, Collections, MutableCollection, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	using namespace UE::Chaos::ClothAsset;
+	FCollectionClothFacade Cloth(MutableCollection.ToSharedRef());
+	if (!Cloth.IsValid())
+	{
+		return FBridgeToolResult::Error(FString::Printf(TEXT("cloth-chaos-set-weightmap: LOD %d does not contain a valid cloth collection"), LodIndex));
+	}
+
+	TArray<int32> SelectedVertices;
+	if (!SelectChaosWeightMapVertices(Arguments, Cloth, SelectedVertices, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	TSharedPtr<FScopedTransaction> Transaction = FBridgeAssetModifier::BeginTransaction(
+		FText::Format(
+			NSLOCTEXT("MCP", "ClothChaosSetWeightMap", "Set Chaos cloth weight map on {0}"),
+			FText::FromString(ClothAssetPath)));
+	FBridgeAssetModifier::MarkModified(Asset);
+
+	TArray<float> BeforeValues;
+	TArray<float> AfterValues;
+	if (!SetWeightMap(Cloth, WeightMapName, SelectedVertices, Value, BeforeValues, AfterValues, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+	if (!RebuildChaosClothAsset(Asset, Collections, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> SelectedVertexValues;
+	AppendIntArrayJson(SelectedVertexValues, SelectedVertices);
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("cloth_asset"), ClothAssetPath);
+	Result->SetNumberField(TEXT("lod_index"), LodIndex);
+	Result->SetStringField(TEXT("weight_map"), WeightMapName.ToString());
+	Result->SetNumberField(TEXT("value"), Value);
+	Result->SetArrayField(TEXT("selected_vertices"), SelectedVertexValues);
+	Result->SetNumberField(TEXT("changed_vertex_count"), SelectedVertices.Num());
+	Result->SetObjectField(TEXT("before"), FloatArrayStatsToJson(BeforeValues));
+	Result->SetObjectField(TEXT("after"), FloatArrayStatsToJson(AfterValues));
 
 	FString SaveError;
 	if (!SaveChaosClothAssetIfRequested(Asset, bSave, Result, SaveError))
@@ -2261,7 +3637,7 @@ FBridgeToolResult UClothSetConfigTool::Execute(const TSharedPtr<FJsonObject>& Ar
 
 FString UClothApplyWeightMapTool::GetToolDescription() const
 {
-	return TEXT("Apply a max-distance cloth weight map from a constant value, imported vertex color channel, or root-bone distance falloff.");
+	return TEXT("Apply a legacy cloth weight map from a constant value, imported vertex color channel, root-bone distance falloff, or spatial selection.");
 }
 
 TMap<FString, FBridgeSchemaProperty> UClothApplyWeightMapTool::GetInputSchema() const
@@ -2270,15 +3646,21 @@ TMap<FString, FBridgeSchemaProperty> UClothApplyWeightMapTool::GetInputSchema() 
 	Schema.Add(TEXT("skeletal_mesh"), ClothSchemaProperty(TEXT("string"), TEXT("SkeletalMesh asset path"), true));
 	Schema.Add(TEXT("asset_name"), ClothSchemaProperty(TEXT("string"), TEXT("Existing clothing asset name"), true));
 	Schema.Add(TEXT("lod_index"), ClothSchemaProperty(TEXT("integer"), TEXT("Clothing asset LOD index")));
-	Schema.Add(TEXT("target"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map target"), false, { TEXT("max-distance") }));
-	Schema.Add(TEXT("rule"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map generation rule"), true, { TEXT("constant"), TEXT("vertex-color"), TEXT("bone-distance") }));
-	Schema.Add(TEXT("value"), ClothSchemaProperty(TEXT("number"), TEXT("Constant rule value")));
+	Schema.Add(TEXT("target"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map target"), false, { TEXT("max-distance"), TEXT("anim-drive-stiffness"), TEXT("anim-drive-damping"), TEXT("backstop-distance"), TEXT("backstop-radius") }));
+	Schema.Add(TEXT("rule"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map generation rule"), true, { TEXT("constant"), TEXT("vertex-color"), TEXT("bone-distance"), TEXT("spatial") }));
+	Schema.Add(TEXT("value"), ClothSchemaProperty(TEXT("number"), TEXT("Constant value, or selected vertex value for spatial")));
 	Schema.Add(TEXT("channel"), ClothSchemaProperty(TEXT("string"), TEXT("Vertex-color channel"), false, { TEXT("red"), TEXT("green"), TEXT("blue"), TEXT("alpha") }));
 	Schema.Add(TEXT("scale"), ClothSchemaProperty(TEXT("number"), TEXT("Vertex-color scale multiplier")));
 	Schema.Add(TEXT("root_bone"), ClothSchemaProperty(TEXT("string"), TEXT("Root bone used by the bone-distance falloff rule")));
-	Schema.Add(TEXT("min_distance"), ClothSchemaProperty(TEXT("number"), TEXT("Output max-distance value at the nearest cloth vertices")));
-	Schema.Add(TEXT("max_distance"), ClothSchemaProperty(TEXT("number"), TEXT("Output max-distance value at the farthest cloth vertices")));
-	Schema.Add(TEXT("curve"), ClothSchemaProperty(TEXT("string"), TEXT("Bone-distance falloff curve"), false, { TEXT("linear"), TEXT("smooth"), TEXT("ease") }));
+	Schema.Add(TEXT("min_distance"), ClothSchemaProperty(TEXT("number"), TEXT("Output weight value at the nearest cloth vertices")));
+	Schema.Add(TEXT("max_distance"), ClothSchemaProperty(TEXT("number"), TEXT("Output weight value at the farthest cloth vertices")));
+	Schema.Add(TEXT("min_value"), ClothSchemaProperty(TEXT("number"), TEXT("Spatial ramp value at z_min or the lowest selected cloth vertices")));
+	Schema.Add(TEXT("max_value"), ClothSchemaProperty(TEXT("number"), TEXT("Spatial ramp value at z_max or the highest selected cloth vertices")));
+	Schema.Add(TEXT("z_min"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z greater than or equal to this value")));
+	Schema.Add(TEXT("z_max"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z less than or equal to this value")));
+	Schema.Add(TEXT("center"), ClothSchemaProperty(TEXT("array"), TEXT("Sphere center [X, Y, Z] for spatial selection")));
+	Schema.Add(TEXT("radius"), ClothSchemaProperty(TEXT("number"), TEXT("Sphere radius for spatial selection")));
+	Schema.Add(TEXT("curve"), ClothSchemaProperty(TEXT("string"), TEXT("Bone-distance or spatial ramp falloff curve"), false, { TEXT("linear"), TEXT("smooth"), TEXT("ease") }));
 	Schema.Add(TEXT("invert"), ClothSchemaProperty(TEXT("boolean"), TEXT("Invert the bone-distance falloff")));
 	Schema.Add(TEXT("save"), ClothSchemaProperty(TEXT("boolean"), TEXT("Save the SkeletalMesh after mutation")));
 	return Schema;
@@ -2309,9 +3691,12 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	}
 
 	const FString Target = GetStringArgOrDefault(Arguments, TEXT("target"), TEXT("max-distance"));
-	if (!Target.Equals(TEXT("max-distance"), ESearchCase::IgnoreCase))
+	EWeightMapTargetCommon WeightMapTarget = EWeightMapTargetCommon::MaxDistance;
+	FString CanonicalTarget;
+	FString TargetError;
+	if (!ResolveLegacyWeightMapTarget(Target, WeightMapTarget, CanonicalTarget, TargetError))
 	{
-		return FBridgeToolResult::Error(TEXT("cloth: only target=max-distance is supported"));
+		return FBridgeToolResult::Error(TargetError);
 	}
 
 	const int32 LodIndex = GetIntArgOrDefault(Arguments, TEXT("lod_index"), 0);
@@ -2323,9 +3708,10 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	const FString Rule = GetStringArgOrDefault(Arguments, TEXT("rule"));
 	if (!Rule.Equals(TEXT("constant"), ESearchCase::IgnoreCase)
 		&& !Rule.Equals(TEXT("vertex-color"), ESearchCase::IgnoreCase)
-		&& !Rule.Equals(TEXT("bone-distance"), ESearchCase::IgnoreCase))
+		&& !Rule.Equals(TEXT("bone-distance"), ESearchCase::IgnoreCase)
+		&& !Rule.Equals(TEXT("spatial"), ESearchCase::IgnoreCase))
 	{
-		return FBridgeToolResult::Error(TEXT("rule must be constant, vertex-color, or bone-distance"));
+		return FBridgeToolResult::Error(TEXT("rule must be constant, vertex-color, bone-distance, or spatial"));
 	}
 
 	FClothLODDataCommon& LodData = Asset->LodData[LodIndex];
@@ -2338,6 +3724,7 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 
 	TArray<float> Values;
 	Values.SetNum(VertexCount);
+	int32 SpatialSelectedVertexCount = 0;
 	if (Rule.Equals(TEXT("constant"), ESearchCase::IgnoreCase))
 	{
 		const float Value = GetFloatArgOrDefault(Arguments, TEXT("value"), 0.0f);
@@ -2363,7 +3750,7 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 		return FBridgeToolResult::Error(TEXT("cloth: vertex-color rule requires editor-only vertex color data"));
 #endif
 	}
-	else
+	else if (Rule.Equals(TEXT("bone-distance"), ESearchCase::IgnoreCase))
 	{
 		const FString RootBone = GetStringArgOrDefault(Arguments, TEXT("root_bone"));
 		FVector RootLocation;
@@ -2403,6 +3790,24 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 			return FBridgeToolResult::Error(FalloffError);
 		}
 	}
+	else
+	{
+		FString SpatialError;
+		if (!BuildSpatialWeightMapValues(Arguments, LodData, WeightMapTarget, Values, SpatialSelectedVertexCount, SpatialError))
+		{
+			return FBridgeToolResult::Error(SpatialError);
+		}
+	}
+
+	FClothLODDataCommon PreviewLodData = LodData;
+	ApplyLegacyWeightMapToLodData(PreviewLodData, Values, WeightMapTarget);
+	TArray<FLegacyClothSectionMapping> GeneratedMappings;
+	FString MappingError;
+	if (CountLegacyClothBoundSections(Mesh, Asset, LodIndex) > 0
+		&& !GenerateLegacyClothRenderMappings(Mesh, Asset, PreviewLodData, LodIndex, INDEX_NONE, GeneratedMappings, MappingError))
+	{
+		return FBridgeToolResult::Error(MappingError);
+	}
 
 	TSharedPtr<FScopedTransaction> Transaction = FBridgeAssetModifier::BeginTransaction(
 		FText::Format(
@@ -2412,38 +3817,23 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	FBridgeAssetModifier::MarkModified(Mesh);
 	FBridgeAssetModifier::MarkModified(Asset);
 
-	FPointWeightMap& PhysicalWeightMap = PhysicalMesh.FindOrAddWeightMap(EWeightMapTargetCommon::MaxDistance);
-	PhysicalWeightMap.Values = Values;
-	ConfigureWeightMapMetadata(PhysicalWeightMap, EWeightMapTargetCommon::MaxDistance);
-
-#if WITH_EDITORONLY_DATA
-	FPointWeightMap* PointWeightMap = nullptr;
-	for (FPointWeightMap& Candidate : LodData.PointWeightMaps)
+	LodData = MoveTemp(PreviewLodData);
+	const TMap<uint32, FPointWeightMap> RemappedPhysicalWeightMaps = LodData.PhysicalMeshData.WeightMaps;
+	if (GeneratedMappings.Num() > 0)
 	{
-		if (Candidate.CurrentTarget == static_cast<uint8>(EWeightMapTargetCommon::MaxDistance))
-		{
-			PointWeightMap = &Candidate;
-			break;
-		}
+		ApplyLegacyClothRenderMappings(Mesh, Asset, GeneratedMappings, false);
 	}
-	if (!PointWeightMap)
-	{
-		PointWeightMap = &LodData.PointWeightMaps.AddDefaulted_GetRef();
-	}
-	PointWeightMap->Values = Values;
-	ConfigureWeightMapMetadata(*PointWeightMap, EWeightMapTargetCommon::MaxDistance);
-#endif
-
-	LodData.PushWeightsToMesh();
-	Asset->ApplyParameterMasks(true);
+	Asset->ApplyParameterMasks(false);
+	RestorePhysicalOnlyLegacyClothWeightMaps(LodData.PhysicalMeshData, RemappedPhysicalWeightMaps);
 	Asset->InvalidateAllCachedData();
 
+	FPointWeightMap* PhysicalWeightMap = LodData.PhysicalMeshData.FindWeightMap(WeightMapTarget);
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMeshPath);
 	Result->SetStringField(TEXT("asset_name"), Asset->GetName());
 	Result->SetNumberField(TEXT("lod_index"), LodIndex);
-	Result->SetStringField(TEXT("target"), TEXT("max-distance"));
+	Result->SetStringField(TEXT("target"), CanonicalTarget);
 	Result->SetStringField(TEXT("rule"), Rule);
 	if (Rule.Equals(TEXT("bone-distance"), ESearchCase::IgnoreCase))
 	{
@@ -2453,7 +3843,164 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 		Result->SetStringField(TEXT("curve"), GetStringArgOrDefault(Arguments, TEXT("curve"), TEXT("linear")));
 		Result->SetBoolField(TEXT("invert"), GetBoolArgOrDefault(Arguments, TEXT("invert"), false));
 	}
-	Result->SetObjectField(TEXT("weight_map"), WeightMapStatsToJson(&PhysicalWeightMap));
+	else if (Rule.Equals(TEXT("spatial"), ESearchCase::IgnoreCase))
+	{
+		Result->SetNumberField(TEXT("selected_vertex_count"), SpatialSelectedVertexCount);
+		if (Arguments.IsValid())
+		{
+			double Value = 0.0;
+			if (Arguments->TryGetNumberField(TEXT("value"), Value))
+			{
+				Result->SetNumberField(TEXT("value"), Value);
+			}
+			double MinValue = 0.0;
+			if (Arguments->TryGetNumberField(TEXT("min_value"), MinValue))
+			{
+				Result->SetNumberField(TEXT("min_value"), MinValue);
+			}
+			double MaxValue = 0.0;
+			if (Arguments->TryGetNumberField(TEXT("max_value"), MaxValue))
+			{
+				Result->SetNumberField(TEXT("max_value"), MaxValue);
+			}
+			double ZMin = 0.0;
+			if (Arguments->TryGetNumberField(TEXT("z_min"), ZMin))
+			{
+				Result->SetNumberField(TEXT("z_min"), ZMin);
+			}
+			double ZMax = 0.0;
+			if (Arguments->TryGetNumberField(TEXT("z_max"), ZMax))
+			{
+				Result->SetNumberField(TEXT("z_max"), ZMax);
+			}
+		}
+	}
+	Result->SetObjectField(TEXT("weight_map"), WeightMapStatsToJson(PhysicalWeightMap));
+	FString SaveError;
+	if (!SaveMeshIfRequested(Mesh, GetBoolArgOrDefault(Arguments, TEXT("save"), false), Result, SaveError))
+	{
+		return FBridgeToolResult::Error(SaveError);
+	}
+	return FBridgeToolResult::Json(Result);
+}
+
+FString UClothWeldTool::GetToolDescription() const
+{
+	return TEXT("Weld coincident simulation vertices in a legacy in-mesh clothing asset physical mesh.");
+}
+
+TMap<FString, FBridgeSchemaProperty> UClothWeldTool::GetInputSchema() const
+{
+	TMap<FString, FBridgeSchemaProperty> Schema;
+	Schema.Add(TEXT("skeletal_mesh"), ClothSchemaProperty(TEXT("string"), TEXT("SkeletalMesh asset path"), true));
+	Schema.Add(TEXT("asset_name"), ClothSchemaProperty(TEXT("string"), TEXT("Existing clothing asset name"), true));
+	Schema.Add(TEXT("lod_index"), ClothSchemaProperty(TEXT("integer"), TEXT("Clothing asset LOD index")));
+	Schema.Add(TEXT("section_index"), ClothSchemaProperty(TEXT("integer"), TEXT("Optional bound skeletal mesh section index to validate and remap")));
+	Schema.Add(TEXT("tolerance"), ClothSchemaProperty(TEXT("number"), TEXT("Maximum physical mesh vertex distance to weld"), true));
+	Schema.Add(TEXT("z_min"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z greater than or equal to this value")));
+	Schema.Add(TEXT("z_max"), ClothSchemaProperty(TEXT("number"), TEXT("Select vertices with local Z less than or equal to this value")));
+	Schema.Add(TEXT("center"), ClothSchemaProperty(TEXT("array"), TEXT("Sphere center [X, Y, Z] for spatial selection")));
+	Schema.Add(TEXT("radius"), ClothSchemaProperty(TEXT("number"), TEXT("Sphere radius for spatial selection")));
+	Schema.Add(TEXT("save"), ClothSchemaProperty(TEXT("boolean"), TEXT("Save the SkeletalMesh after mutation")));
+	return Schema;
+}
+
+TArray<FString> UClothWeldTool::GetRequiredParams() const
+{
+	return { TEXT("skeletal_mesh"), TEXT("asset_name"), TEXT("tolerance") };
+}
+
+FBridgeToolResult UClothWeldTool::Execute(const TSharedPtr<FJsonObject>& Arguments, const FBridgeToolContext& Context)
+{
+	(void)Context;
+	USkeletalMesh* Mesh = nullptr;
+	UClothingAssetBase* AssetBase = nullptr;
+	FString SkeletalMeshPath;
+	FString AssetName;
+	FBridgeToolResult LoadResult = LoadMeshAndAsset(Arguments, Mesh, AssetBase, SkeletalMeshPath, AssetName);
+	if (LoadResult.bIsError)
+	{
+		return LoadResult;
+	}
+
+	UClothingAssetCommon* Asset = Cast<UClothingAssetCommon>(AssetBase);
+	if (!Asset)
+	{
+		return FBridgeToolResult::Error(TEXT("cloth-weld requires a UClothingAssetCommon asset"));
+	}
+
+	const int32 LodIndex = GetIntArgOrDefault(Arguments, TEXT("lod_index"), 0);
+	if (!Asset->LodData.IsValidIndex(LodIndex))
+	{
+		return FBridgeToolResult::Error(FString::Printf(TEXT("lod_index %d is out of range"), LodIndex));
+	}
+
+	float Tolerance = 0.0f;
+	if (!GetFloatArg(Arguments, TEXT("tolerance"), Tolerance))
+	{
+		return FBridgeToolResult::Error(TEXT("cloth: tolerance is required"));
+	}
+	if (Tolerance < 0.0f)
+	{
+		return FBridgeToolResult::Error(TEXT("cloth: tolerance must be non-negative"));
+	}
+
+	FClothLODDataCommon& LodData = Asset->LodData[LodIndex];
+	TArray<bool> SelectedVertices;
+	FString Error;
+	if (!BuildLegacyClothWeldSelection(Arguments, LodData.PhysicalMeshData, SelectedVertices, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	const int32 SectionIndex = GetIntArgOrDefault(Arguments, TEXT("section_index"), INDEX_NONE);
+	FClothLODDataCommon PreviewLodData = LodData;
+	FLegacyClothWeldResult WeldResult;
+	if (!WeldLegacyPhysicalMeshVertices(PreviewLodData, Tolerance, SelectedVertices, WeldResult, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	TArray<FLegacyClothSectionMapping> GeneratedMappings;
+	if (!GenerateLegacyClothRenderMappings(Mesh, Asset, PreviewLodData, LodIndex, SectionIndex, GeneratedMappings, Error))
+	{
+		return FBridgeToolResult::Error(Error);
+	}
+
+	TSharedPtr<FScopedTransaction> Transaction = FBridgeAssetModifier::BeginTransaction(
+		FText::Format(
+			NSLOCTEXT("MCP", "ClothWeld", "Weld cloth physical mesh {0} on {1}"),
+			FText::FromString(AssetName),
+			FText::FromString(SkeletalMeshPath)));
+	FScopedSkeletalMeshPostEditChange WeldPostEditChange(Mesh);
+	FBridgeAssetModifier::MarkModified(Mesh);
+	FBridgeAssetModifier::MarkModified(Asset);
+
+	LodData = MoveTemp(PreviewLodData);
+	const TMap<uint32, FPointWeightMap> RemappedPhysicalWeightMaps = LodData.PhysicalMeshData.WeightMaps;
+	ApplyLegacyClothRenderMappings(Mesh, Asset, GeneratedMappings, true);
+
+	Asset->RefreshBoneMapping(Mesh);
+	Asset->BuildLodTransitionData();
+	Asset->ApplyParameterMasks(true);
+	RestorePhysicalOnlyLegacyClothWeightMaps(LodData.PhysicalMeshData, RemappedPhysicalWeightMaps);
+	Asset->InvalidateAllCachedData();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMeshPath);
+	Result->SetStringField(TEXT("asset_name"), Asset->GetName());
+	Result->SetNumberField(TEXT("lod_index"), LodIndex);
+	Result->SetNumberField(TEXT("section_index"), SectionIndex);
+	Result->SetNumberField(TEXT("tolerance"), Tolerance);
+	Result->SetNumberField(TEXT("original_vertex_count"), WeldResult.OriginalVertexCount);
+	Result->SetNumberField(TEXT("final_vertex_count"), WeldResult.FinalVertexCount);
+	Result->SetNumberField(TEXT("selected_vertex_count"), WeldResult.SelectedVertexCount);
+	Result->SetNumberField(TEXT("welded_vertex_count"), WeldResult.WeldedVertexCount);
+	Result->SetNumberField(TEXT("weld_group_count"), WeldResult.WeldGroupCount);
+	Result->SetNumberField(TEXT("removed_degenerate_triangle_count"), WeldResult.RemovedDegenerateTriangleCount);
+	Result->SetNumberField(TEXT("remapped_section_count"), GeneratedMappings.Num());
+
 	FString SaveError;
 	if (!SaveMeshIfRequested(Mesh, GetBoolArgOrDefault(Arguments, TEXT("save"), false), Result, SaveError))
 	{
@@ -2550,6 +4097,116 @@ void FClothWeightMapFalloffSpec::Define()
 				TEXT("uniform distances rejected"),
 				BuildBoneDistanceFalloffValues(UniformDistances, 0.0f, 80.0f, TEXT("linear"), false, Values, Error));
 			TestTrue(TEXT("uniform error reported"), Error.Contains(TEXT("non-uniform distances")));
+		});
+
+		It("builds spatial ramp values while preserving unselected vertices", [this]()
+		{
+			FClothLODDataCommon LodData;
+			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+			PhysicalMesh.Vertices = {
+				FVector3f(0.0f, 0.0f, 0.0f),
+				FVector3f(0.0f, 0.0f, 50.0f),
+				FVector3f(0.0f, 0.0f, 100.0f),
+			};
+			FPointWeightMap& Existing = PhysicalMesh.FindOrAddWeightMap(EWeightMapTargetCommon::MaxDistance);
+			Existing.Values = { 3.0f, 4.0f, 5.0f };
+
+			TSharedPtr<FJsonObject> Args = MakeShared<FJsonObject>();
+			Args->SetNumberField(TEXT("z_min"), 50.0);
+			Args->SetNumberField(TEXT("z_max"), 100.0);
+			Args->SetNumberField(TEXT("min_value"), 0.0);
+			Args->SetNumberField(TEXT("max_value"), 20.0);
+
+			TArray<float> Values;
+			int32 SelectedVertexCount = 0;
+			FString Error;
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::MaxDistance, Values, SelectedVertexCount, Error);
+
+			TestTrue(TEXT("spatial values built"), bBuilt);
+			TestEqual(TEXT("value count"), Values.Num(), 3);
+			TestEqual(TEXT("selected count"), SelectedVertexCount, 2);
+			TestEqual(TEXT("unselected value preserved"), Values[0], 3.0f);
+			TestEqual(TEXT("z-min value"), Values[1], 0.0f);
+			TestEqual(TEXT("z-max value"), Values[2], 20.0f);
+		});
+
+		It("preserves existing values for the selected legacy target", [this]()
+		{
+			FClothLODDataCommon LodData;
+			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+			PhysicalMesh.Vertices = {
+				FVector3f(0.0f, 0.0f, 0.0f),
+				FVector3f(0.0f, 0.0f, 50.0f),
+			};
+			FPointWeightMap& MaxDistance = PhysicalMesh.FindOrAddWeightMap(EWeightMapTargetCommon::MaxDistance);
+			MaxDistance.Values = { 3.0f, 4.0f };
+			FPointWeightMap& AnimDrive = PhysicalMesh.FindOrAddWeightMap(EWeightMapTargetCommon::AnimDriveStiffness);
+			AnimDrive.Values = { 0.25f, 0.5f };
+
+			TSharedPtr<FJsonObject> Args = MakeShared<FJsonObject>();
+			Args->SetNumberField(TEXT("z_min"), 50.0);
+			Args->SetNumberField(TEXT("z_max"), 50.0);
+			Args->SetNumberField(TEXT("value"), 1.0);
+
+			TArray<float> Values;
+			int32 SelectedVertexCount = 0;
+			FString Error;
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::AnimDriveStiffness, Values, SelectedVertexCount, Error);
+
+			TestTrue(TEXT("spatial values built"), bBuilt);
+			TestEqual(TEXT("value count"), Values.Num(), 2);
+			TestEqual(TEXT("selected count"), SelectedVertexCount, 1);
+			TestEqual(TEXT("unselected anim-drive value preserved"), Values[0], 0.25f);
+			TestEqual(TEXT("selected anim-drive value changed"), Values[1], 1.0f);
+		});
+
+		It("uses the effective duplicate mask values for spatial preservation", [this]()
+		{
+			FClothLODDataCommon LodData;
+			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
+			PhysicalMesh.Vertices = {
+				FVector3f(0.0f, 0.0f, 0.0f),
+				FVector3f(0.0f, 0.0f, 50.0f),
+			};
+
+			FPointWeightMap& FirstAnimDrive = LodData.PointWeightMaps.AddDefaulted_GetRef();
+			FirstAnimDrive.Values = { 0.25f, 0.5f };
+			ConfigureWeightMapMetadata(FirstAnimDrive, EWeightMapTargetCommon::AnimDriveStiffness);
+			FPointWeightMap& SecondAnimDrive = LodData.PointWeightMaps.AddDefaulted_GetRef();
+			SecondAnimDrive.Values = { 0.75f, 0.9f };
+			ConfigureWeightMapMetadata(SecondAnimDrive, EWeightMapTargetCommon::AnimDriveStiffness);
+
+			TSharedPtr<FJsonObject> Args = MakeShared<FJsonObject>();
+			Args->SetNumberField(TEXT("z_min"), 50.0);
+			Args->SetNumberField(TEXT("z_max"), 50.0);
+			Args->SetNumberField(TEXT("value"), 1.0);
+
+			TArray<float> Values;
+			int32 SelectedVertexCount = 0;
+			FString Error;
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::AnimDriveStiffness, Values, SelectedVertexCount, Error);
+
+			TestTrue(TEXT("spatial values built"), bBuilt);
+			TestEqual(TEXT("unselected effective duplicate value preserved"), Values[0], 0.75f);
+
+			ApplyLegacyWeightMapToLodData(LodData, Values, EWeightMapTargetCommon::AnimDriveStiffness);
+
+			int32 MatchingMaskCount = 0;
+			for (const FPointWeightMap& PointWeightMap : LodData.PointWeightMaps)
+			{
+				if (PointWeightMap.CurrentTarget == static_cast<uint8>(EWeightMapTargetCommon::AnimDriveStiffness))
+				{
+					++MatchingMaskCount;
+				}
+			}
+			TestEqual(TEXT("duplicate target masks collapsed"), MatchingMaskCount, 1);
+			const FPointWeightMap* PhysicalAnimDrive = LodData.PhysicalMeshData.FindWeightMap(EWeightMapTargetCommon::AnimDriveStiffness);
+			TestNotNull(TEXT("physical anim-drive map exists"), PhysicalAnimDrive);
+			if (PhysicalAnimDrive)
+			{
+				TestEqual(TEXT("physical unselected value"), PhysicalAnimDrive->Values[0], 0.75f);
+				TestEqual(TEXT("physical selected value"), PhysicalAnimDrive->Values[1], 1.0f);
+			}
 		});
 	});
 }

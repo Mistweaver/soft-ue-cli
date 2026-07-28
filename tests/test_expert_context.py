@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parents[2] / "cli"))
 
 from soft_ue_cli.expert_context import (  # noqa: E402
     ExpertContextAuthError,
@@ -17,12 +12,10 @@ from soft_ue_cli.expert_context import (  # noqa: E402
     build_context_request,
 )
 
-
 def test_client_requires_explicit_endpoint(monkeypatch) -> None:
     monkeypatch.delenv("SOFT_UE_EXPERT_SERVER_URL", raising=False)
     with pytest.raises(ExpertContextConfigError, match="not configured"):
         ExpertContextClient.from_environment()
-
 
 def test_build_request_rejects_personal_paths() -> None:
     with pytest.raises(ExpertContextPrivacyError):
@@ -31,7 +24,6 @@ def test_build_request_rejects_personal_paths() -> None:
             evidence=[{"kind": "log", "value": r"C:\\Users\\alice\\secret\\Game.cpp", "source": "build-log"}],
             environment={"ue_version": "5.8"},
         )
-
 
 @pytest.mark.parametrize(
     "private_path",
@@ -48,7 +40,6 @@ def test_build_request_rejects_absolute_private_paths(private_path: str) -> None
             evidence=[{"kind": "log", "value": private_path, "source": "build-log"}],
             environment={"ue_version": "5.8"},
         )
-
 
 def test_client_posts_context_with_bearer_header(monkeypatch) -> None:
     captured: dict[str, object] = {}
@@ -100,7 +91,6 @@ def test_client_posts_context_with_bearer_header(monkeypatch) -> None:
         "timeout": 30.0,
     }
 
-
 def test_client_rejects_unavailable_response(monkeypatch) -> None:
     class FakeResponse:
         status_code = 503
@@ -133,7 +123,6 @@ def test_client_rejects_unavailable_response(monkeypatch) -> None:
     client = ExpertContextClient("http://expert.test")
     with pytest.raises(ExpertContextUnavailableError):
         client.context({"schema": "soft-ue.expert-context-request.v1"})
-
 
 def test_client_redacts_token_from_auth_and_transport_errors(monkeypatch) -> None:
     class AuthResponse:
@@ -183,7 +172,6 @@ def test_client_redacts_token_from_auth_and_transport_errors(monkeypatch) -> Non
     assert transport_error.value.__class__.__name__ == "ExpertContextTransportError"
     assert "secret-token" not in str(transport_error.value)
 
-
 def test_client_handles_real_streamed_auth_error_without_response_not_read(monkeypatch) -> None:
     import httpx
 
@@ -206,7 +194,6 @@ def test_client_handles_real_streamed_auth_error_without_response_not_read(monke
     message = str(auth_error.value)
     assert "secret-token" not in message
     assert "bad <redacted>" in message
-
 
 def test_client_handles_unread_streamed_auth_error_without_leaking_token(monkeypatch) -> None:
     import httpx
@@ -256,7 +243,6 @@ def test_client_handles_unread_streamed_auth_error_without_leaking_token(monkeyp
     message = str(auth_error.value)
     assert "secret-token" not in message
     assert "bad <redacted>" in message
-
 
 def test_client_rejects_invalid_schema_and_oversize_response(monkeypatch) -> None:
     class BadSchemaResponse:
@@ -310,7 +296,6 @@ def test_client_rejects_invalid_schema_and_oversize_response(monkeypatch) -> Non
     with pytest.raises(ExpertContextContractError, match="too large"):
         client.context({"schema": "soft-ue.expert-context-request.v1"})
 
-
 def test_client_streaming_response_cap_stops_reading_after_limit(monkeypatch) -> None:
     chunks_read = 0
 
@@ -353,7 +338,6 @@ def test_client_streaming_response_cap_stops_reading_after_limit(monkeypatch) ->
 
     assert chunks_read == 3
 
-
 def test_build_request_validates_evidence_shape_and_rejects_tokens() -> None:
     with pytest.raises(ExpertContextPrivacyError):
         build_context_request(
@@ -368,7 +352,6 @@ def test_build_request_validates_evidence_shape_and_rejects_tokens() -> None:
             evidence=[{"kind": "log", "value": "missing source"}],
             environment={},
         )
-
 
 def test_build_request_includes_contract_metadata() -> None:
     request = build_context_request(

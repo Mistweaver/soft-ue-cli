@@ -126,10 +126,12 @@ class MCPClient:
         "cloth-convert": "cloth convert",
         "cloth-chaos-stitch": "cloth chaos-stitch",
         "cloth-chaos-set-config": "cloth chaos-set-config",
+        "cloth-chaos-set-weightmap": "cloth chaos-set-weightmap",
         "cloth-create": "cloth create",
         "cloth-bind": "cloth bind",
         "cloth-set-config": "cloth set-config",
         "cloth-apply-weightmap": "cloth apply-weightmap",
+        "cloth-weld": "cloth weld",
         "cloth-set-collision": "cloth set-collision",
     }
 
@@ -396,10 +398,12 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             "cloth-convert",
             "cloth-chaos-stitch",
             "cloth-chaos-set-config",
+            "cloth-chaos-set-weightmap",
             "cloth-create",
             "cloth-bind",
             "cloth-set-config",
             "cloth-apply-weightmap",
+            "cloth-weld",
             "cloth-set-collision",
         }
         tool_names = set(info.get("tool_names", [])) if isinstance(info, dict) else set()
@@ -1326,10 +1330,14 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "cloth chaos-stitch" in s and "--vertex-pairs" in s and "--first-vertices" in s)
     run_cli("cloth chaos-set-config help", "cloth", "chaos-set-config", "--help",
             check_stdout=lambda s: "cloth chaos-set-config" in s and "--properties" in s)
+    run_cli("cloth chaos-set-weightmap help", "cloth", "chaos-set-weightmap", "--help",
+            check_stdout=lambda s: "cloth chaos-set-weightmap" in s and "--vertices" in s and "--z-min" in s)
     run_cli("cloth create help", "cloth", "create", "--help",
             check_stdout=lambda s: "cloth create" in s and "--section-index" in s and "--bind" in s)
     run_cli("cloth apply-weightmap help", "cloth", "apply-weightmap", "--help",
-            check_stdout=lambda s: "cloth apply-weightmap" in s and "--rule" in s and "vertex-color" in s and "bone-distance" in s)
+            check_stdout=lambda s: "cloth apply-weightmap" in s and "--rule" in s and "vertex-color" in s and "bone-distance" in s and "spatial" in s and "--z-min" in s and "anim-drive-stiffness" in s)
+    run_cli("cloth weld help", "cloth", "weld", "--help",
+            check_stdout=lambda s: "cloth weld" in s and "--tolerance" in s and "--z-min" in s)
     run_cli("blueprint graph inspect help", "blueprint", "graph", "inspect", "--help",
             check_stdout=lambda s: "blueprint graph inspect" in s and "--graph-name" in s)
     _umg_expected = os.path.join(tempfile.gettempdir(), f"soft_ue_umg_expected_{RUN_TS}_{mode_name}.json")
@@ -1775,6 +1783,72 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             _stop_ok, int((time.time() - _t0) * 1000), _stop_err)
 
     run_test("insights-list-traces", "insights-list-traces", {}, has("traces"))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Suite 17: Session Channel
+    # ══════════════════════════════════════════════════════════════════════════
+    begin_suite("session")
+
+    # One name for the whole run, passed on every call. --as is per-command:
+    # each run_cli spawns a fresh process, so an exported env var would not carry.
+    SESSION_NAME = f"suet-{RUN_TS}-{mode_name}"
+    _ask_id = None
+
+    def _remember_ask_id(stdout: str) -> bool:
+        nonlocal _ask_id
+        data = json.loads(stdout)
+        _ask_id = data.get("ask_id")
+        return bool(_ask_id) and "active_sessions" in data
+
+    def _roster_includes_self(stdout: str) -> bool:
+        data = json.loads(stdout)
+        labels = [s.get("label") for s in data.get("sessions", [])]
+        return "you" in data and SESSION_NAME in labels
+
+    run_cli("session announce", "session", "announce",
+            "--as", SESSION_NAME,
+            "--status", "soft-ue-cli integration suite",
+            "--intent", "write",
+            "--resources", TEST_NS,
+            check_stdout=lambda s: json.loads(s).get("label") == SESSION_NAME
+                                   and "state" in json.loads(s))
+    run_cli("session list", "session", "list", "--as", SESSION_NAME,
+            check_stdout=_roster_includes_self)
+    run_cli("session broadcast", "session", "broadcast", "--as", SESSION_NAME,
+            "--message", f"integration suite running in {TEST_NS}", "--tag", "fyi",
+            check_stdout=lambda s: "seq" in json.loads(s) and "delivered_to" in json.loads(s))
+
+    # --timeout is left at its default 0 so this returns the posted ask_id
+    # immediately. There is no second session to answer, and polling here would
+    # only burn the suite's clock.
+    run_cli("session ask", "session", "ask", "--as", SESSION_NAME,
+            "--to", SESSION_NAME,
+            "--question", "Integration suite self-addressed question",
+            "--context", "test-tools session coverage",
+            check_stdout=_remember_ask_id)
+
+    if _ask_id:
+        run_cli("session answer", "session", "answer", "--as", SESSION_NAME,
+                "--id", _ask_id,
+                "--answer", "self-answered by the integration suite",
+                "--decision", "yes",
+                check_stdout=lambda s: json.loads(s).get("ok") is True)
+    else:
+        _record("session answer", "soft-ue-cli session answer", {},
+                False, 0, "skipped: session ask returned no ask_id")
+
+    # A session never receives its own messages, so messages/answers are expected
+    # to be empty in a single-session run. Assert the shape, not the contents.
+    run_cli("session inbox", "session", "inbox", "--as", SESSION_NAME,
+            check_stdout=lambda s: all(k in json.loads(s)
+                                       for k in ("messages", "answers", "silent")))
+
+    run_cli("session leave", "session", "leave", "--as", SESSION_NAME,
+            "--reason", "integration suite finished",
+            check_stdout=lambda s: json.loads(s).get("ok") is True)
+    # Leaving twice is harmless — the suite must be re-runnable without cleanup.
+    run_cli("session leave repeat (idempotent)", "session", "leave", "--as", SESSION_NAME,
+            check_stdout=lambda s: json.loads(s).get("ok") is True)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Teardown

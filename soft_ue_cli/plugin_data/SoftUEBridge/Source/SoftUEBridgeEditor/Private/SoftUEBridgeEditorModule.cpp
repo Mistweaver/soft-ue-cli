@@ -235,6 +235,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	{
 		Registry.RegisterToolClass<UClothChaosSetConfigTool>();
 	}
+	if (!Registry.HasTool(TEXT("cloth-chaos-set-weightmap")))
+	{
+		Registry.RegisterToolClass<UClothChaosSetWeightMapTool>();
+	}
 	if (!Registry.HasTool(TEXT("cloth-create")))
 	{
 		Registry.RegisterToolClass<UClothCreateTool>();
@@ -250,6 +254,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("cloth-apply-weightmap")))
 	{
 		Registry.RegisterToolClass<UClothApplyWeightMapTool>();
+	}
+	if (!Registry.HasTool(TEXT("cloth-weld")))
+	{
+		Registry.RegisterToolClass<UClothWeldTool>();
 	}
 	if (!Registry.HasTool(TEXT("cloth-set-collision")))
 	{

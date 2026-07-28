@@ -2,6 +2,7 @@
 
 #include "Tools/Build/BuildAndRelaunchTool.h"
 #include "SoftUEBridgeEditorModule.h"
+#include "Session/BridgeSessionRegistry.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
@@ -229,9 +230,14 @@ TMap<FString, FBridgeSchemaProperty> UBuildAndRelaunchTool::GetInputSchema() con
 
 FBridgeToolResult UBuildAndRelaunchTool::Execute(
 	const TSharedPtr<FJsonObject>& Arguments,
-	const FBridgeToolContext& /*Context*/)
+	const FBridgeToolContext& Context)
 {
 #if PLATFORM_WINDOWS
+	// Copied out of the context here: the exit ticker below outlives Execute, and
+	// Context is a reference owned by the caller.
+	const FString ShutdownSessionId = FBridgeSessionRegistry::ResolveSessionId(Context);
+	const FString ShutdownSessionLabel = Context.SessionLabel;
+
 	FString BuildConfig = GetStringArgOrDefault(Arguments, TEXT("build_config"), TEXT("Development"));
 	bool bSkipRelaunch = GetBoolArgOrDefault(Arguments, TEXT("skip_relaunch"), false);
 	const FString Compiler = GetStringArgOrDefault(Arguments, TEXT("compiler"), TEXT(""));
@@ -553,10 +559,31 @@ FBridgeToolResult UBuildAndRelaunchTool::Execute(
 	Result->SetNumberField(TEXT("startup_marker_timeout"), StartupMarkerTimeoutSeconds);
 	Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Build and relaunch workflow initiated for this editor instance (PID: %d). Editor will close momentarily."), CurrentPID));
 
+	TArray<TSharedPtr<FJsonValue>> Others =
+		FBridgeSessionRegistry::Get().OtherLiveSessionsJson(ShutdownSessionId);
+	if (Others.Num() > 0)
+	{
+		Result->SetArrayField(TEXT("other_sessions"), Others);
+		Result->SetStringField(TEXT("other_sessions_note"),
+			TEXT("Other sessions were active in this editor when it shut down. "
+			     "Check each one's state and last_seen_s. If you did not ask first, say so in your output."));
+	}
+
 	// Request editor shutdown
 	// Use a small delay to allow the response to be sent
-	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float DeltaTime) -> bool
+	// Context is a reference that does not outlive Execute, so the identity is
+	// captured by value: the lambda runs a second later, from the ticker.
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+		[ShutdownSessionId, ShutdownSessionLabel](float DeltaTime) -> bool
 	{
+		FSessionMessage Intent;
+		Intent.Kind = TEXT("shutdown_intent");
+		Intent.From = ShutdownSessionId;
+		Intent.FromLabel = ShutdownSessionLabel;
+		Intent.Text = TEXT("ran build-and-relaunch; the editor is shutting down for a rebuild");
+		FBridgeSessionRegistry::Get().Post(Intent);
+		FBridgeSessionRegistry::Get().Flush();
+
 		FPlatformMisc::RequestExit(false);
 		return false; // Don't repeat
 	}), 1.0f);

@@ -43,6 +43,7 @@ public class SoftUEBridgeEditor : ModuleRules
 			"ClothingSystemEditorInterface",
 			"ClothingSystemEditor",
 			"Chaos",
+			"ChaosCore",
 			"ChaosClothAsset",
 			"ChaosClothAssetEngine",
 			"ChaosClothAssetTools",
