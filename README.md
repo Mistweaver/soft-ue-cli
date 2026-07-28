@@ -42,6 +42,7 @@ soft-ue-cli  (CLI or MCP server)
 
 - **MCP server + CLI in one package** -- use as an MCP server (`mcp-serve`) for Claude Desktop, Cursor, Windsurf, and other MCP clients, **or** as a standard CLI for Claude Code, shell scripts, and CI/CD. Same 120+ tool surface either way.
 - **AI-native UE automation** -- purpose-built so LLM agents can read, modify, and test Unreal Engine projects without a human touching the editor.
+- **Agents that can see each other** -- when several sessions drive one editor, the `session` family gives them a shared roster derived from bridge traffic, so one agent stops rebuilding the editor out from under another's PIE test. Advisory only: it informs, it never blocks.
 - **120+ commands and tools** covering actors, Blueprints, materials, MetaSounds, StateTrees, Mutable/CustomizableObject, widgets, assets, config files, PIE sessions, profiling, screenshots, and local Unreal file analysis.
 - **Command families, not one-off names** -- UMG, capture, Mutable, StateTree, MetaSound, animation, asset, and Blueprint workflows are grouped under `umg`, `capture`, `mutable`, `statetree`, `metasound`, `anim`, `asset`, and `blueprint`.
 - **Plugin-aware metadata** -- `soft-ue-cli commands --json` reports bridge/editor/PIE requirements plus optional Unreal plugin dependencies, and bridge tools return structured `plugin_unavailable` errors when a plugin is missing.
@@ -540,15 +541,30 @@ to find who would lose a running test, not `--intent pie` (that only matches ses
 declared it by hand). The family also lets a session ask before disruptive work such as
 rebuilding, restarting the editor, or stopping a running PIE session.
 
+Pick one short readable name and pass it as an environment prefix on **every** command,
+session or not. That is what keeps your PIE claim and your name on the same roster row:
+
 ```bash
-soft-ue-cli session announce --as cape-cloth --status "Converting SK_Cape to Chaos cloth" --intent write --resources /Game/Characters/SK_Cape
-soft-ue-cli session list --as cape-cloth
-soft-ue-cli session broadcast --as cape-cloth --message "Saving all assets in 30s" --tag warning
-soft-ue-cli session ask --as builder --to cape-cloth --question "Can I rebuild and relaunch?" --timeout 120
-soft-ue-cli session answer --as cape-cloth --id a-77 --decision wait --answer "3 more minutes, mid-PIE"
-soft-ue-cli session inbox --as cape-cloth --unread-only
-soft-ue-cli session leave --as cape-cloth --reason "cloth conversion done"
+export SOFT_UE_SESSION=cape-cloth   # or prefix each command, see the note below
+
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session announce --status "Converting SK_Cape to Chaos cloth" --intent write --resources /Game/Characters/SK_Cape
+SOFT_UE_SESSION=cape-cloth soft-ue-cli pie-session start
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session list
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session broadcast --message "Saving all assets in 30s" --tag warning
+SOFT_UE_SESSION=builder    soft-ue-cli session ask --to cape-cloth --question "Can I rebuild and relaunch?" --timeout 120
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session answer --id a-77 --decision wait --answer "3 more minutes, mid-PIE"
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session inbox --unread-only
+SOFT_UE_SESSION=cape-cloth soft-ue-cli session leave --reason "cloth conversion done"
 ```
+
+The `--as <name>` flag does the same thing but exists **only** on `session` leaves --
+`pie-session start --as cape-cloth` is an argparse error. Mixing the two forms splits one
+agent across two roster rows: the `pie` claim lands on a nameless `unknown:<origin>` entry
+while your name sits on another, so `session list --resource pie` reports a session nobody
+can address. Some agent harnesses give each shell invocation a fresh environment, in which
+case `export` will not survive between calls -- use the per-command prefix shown above.
+MCP clients have no shell at all: there, pass `session_as` to `session announce` once and
+every later call from that server inherits it.
 
 It is advisory only. Nothing in this family blocks any command, vetoes another session, or
 acquires a lock -- it tells a session who else is here and what they are doing, and the calling
