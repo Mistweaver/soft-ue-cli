@@ -1,6 +1,7 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/PIE/PieSessionTool.h"
+#include "Tools/PIE/BridgePIEWorlds.h"
 #include "SoftUEBridgeEditorModule.h"
 #include "Tools/Widget/WidgetPreviewRegistry.h"
 #include "Session/BridgeSessionRegistry.h"
@@ -549,10 +550,27 @@ FBridgeToolResult UPieSessionTool::ExecuteGetState(const TSharedPtr<FJsonObject>
 	bool bIncludePlayers = IncludeSet.Num() == 0 || IncludeSet.Contains(TEXT("players"));
 
 	bool bRunning = GEditor->IsPlaySessionInProgress();
-	UWorld* PIEWorld = GetPIEWorld();
+	const TArray<FBridgePIEWorld> PIEWorlds = FBridgePIEWorlds::Enumerate();
+	UWorld* PIEWorld = PIEWorlds.Num() > 0 ? PIEWorlds[0].World : nullptr;
 
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 	Result->SetBoolField(TEXT("running"), bRunning);
+	TArray<TSharedPtr<FJsonValue>> WorldsJson;
+	for (const FBridgePIEWorld& Entry : PIEWorlds)
+	{
+		TSharedPtr<FJsonObject> WorldInfo = GetWorldInfo(Entry.World);
+		WorldInfo->SetNumberField(TEXT("pie_instance"), Entry.PIEInstance);
+		WorldInfo->SetStringField(TEXT("world_name"), Entry.World->GetName());
+		WorldInfo->SetStringField(TEXT("net_mode"), FBridgePIEWorlds::NetModeName(Entry.World->GetNetMode()));
+		WorldInfo->SetBoolField(TEXT("paused"), Entry.World->IsPaused());
+		if (bIncludePlayers)
+		{
+			WorldInfo->SetArrayField(TEXT("players"), GetPlayersInfo(Entry.World));
+		}
+		WorldsJson.Add(MakeShared<FJsonValueObject>(WorldInfo));
+	}
+	Result->SetArrayField(TEXT("worlds"), WorldsJson);
+	Result->SetNumberField(TEXT("world_count"), PIEWorlds.Num());
 	if (!GBridgePIESessionId.IsEmpty())
 	{
 		Result->SetStringField(TEXT("session_id"), GBridgePIESessionId);
@@ -622,14 +640,8 @@ FString UPieSessionTool::GenerateSessionId() const
 
 UWorld* UPieSessionTool::GetPIEWorld() const
 {
-	for (const FWorldContext& WorldContext : GEngine->GetWorldContexts())
-	{
-		if (WorldContext.WorldType == EWorldType::PIE && WorldContext.World())
-		{
-			return WorldContext.World();
-		}
-	}
-	return nullptr;
+	const TArray<FBridgePIEWorld> Worlds = FBridgePIEWorlds::Enumerate();
+	return Worlds.Num() > 0 ? Worlds[0].World : nullptr;
 }
 
 bool UPieSessionTool::WaitForPIEReady(float TimeoutSeconds) const

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+
 from soft_ue_cli.runtime_binary import (
     build_runtime_smoke_plan,
     inspect_packaged_readiness,
@@ -16,6 +17,7 @@ from soft_ue_cli.runtime_binary import (
     read_installed_metadata,
     write_installed_metadata,
 )
+
 
 def _write_project(root: Path, *, enabled: bool = True) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -36,6 +38,7 @@ def _write_project(root: Path, *, enabled: bool = True) -> Path:
         encoding="utf-8",
     )
     return uproject
+
 
 def _write_manifest(path: Path) -> Path:
     path.write_text(
@@ -65,6 +68,7 @@ def _write_manifest(path: Path) -> Path:
     )
     return path
 
+
 def test_packaged_readiness_reports_supported_development_project(tmp_path: Path) -> None:
     _write_project(tmp_path)
 
@@ -81,6 +85,7 @@ def test_packaged_readiness_reports_supported_development_project(tmp_path: Path
         "plugin-enabled",
     }
 
+
 def test_packaged_readiness_accepts_bom_encoded_uproject(tmp_path: Path) -> None:
     _write_project(tmp_path)
     (tmp_path / "Sample.uproject").write_bytes(
@@ -91,6 +96,7 @@ def test_packaged_readiness_accepts_bom_encoded_uproject(tmp_path: Path) -> None
 
     assert any(check["id"] == "plugin-enabled" and check["status"] == "pass" for check in report["checks"])
 
+
 def test_packaged_readiness_blocks_shipping_by_default(tmp_path: Path) -> None:
     _write_project(tmp_path)
 
@@ -100,6 +106,7 @@ def test_packaged_readiness_blocks_shipping_by_default(tmp_path: Path) -> None:
     assert report["supported"] is False
     assert any(check["id"] == "configuration-supported" and check["status"] == "fail" for check in report["checks"])
     assert "Shipping" in report["recovery_hints"][0]
+
 
 def test_binary_install_plan_selects_matching_manifest_package(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
@@ -119,6 +126,7 @@ def test_binary_install_plan_selects_matching_manifest_package(tmp_path: Path) -
     assert plan["owned_paths"] == ["Plugins/SoftUEBridge/"]
     assert plan["copy_plan"][0]["destination"].endswith("Plugins/SoftUEBridge/SoftUEBridge.uplugin")
 
+
 def test_binary_install_plan_accepts_bom_encoded_manifest(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
     manifest = _write_manifest(tmp_path / "manifest.json")
@@ -133,6 +141,7 @@ def test_binary_install_plan_accepts_bom_encoded_manifest(tmp_path: Path) -> Non
     )
 
     assert plan["action"] == "binary-install"
+
 
 def test_binary_install_plan_falls_back_to_source_when_no_binary_matches(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
@@ -149,6 +158,7 @@ def test_binary_install_plan_falls_back_to_source_when_no_binary_matches(tmp_pat
     assert plan["action"] == "source-install"
     assert "No matching binary package" in plan["reason"]
 
+
 def test_binary_update_blocks_existing_unowned_plugin(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
     manifest = _write_manifest(tmp_path / "manifest.json")
@@ -163,6 +173,7 @@ def test_binary_update_blocks_existing_unowned_plugin(tmp_path: Path) -> None:
 
     assert plan["action"] == "blocked"
     assert plan["reason"] == "existing_plugin_unowned"
+
 
 def test_binary_update_plans_backup_when_existing_plugin_is_owned(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
@@ -191,6 +202,7 @@ def test_binary_update_plans_backup_when_existing_plugin_is_owned(tmp_path: Path
     assert plan["next"]["bridge_version"] == "1.42.0"
     assert plan["backup_path"].endswith(".soft-ue-bridge/backups/SoftUEBridge-1.41.0")
 
+
 def test_binary_metadata_and_rollback_plan(tmp_path: Path) -> None:
     _write_project(tmp_path / "project")
     metadata = {
@@ -209,6 +221,7 @@ def test_binary_metadata_and_rollback_plan(tmp_path: Path) -> None:
     assert rollback["action"] == "rollback"
     assert rollback["backup_path"].endswith(".soft-ue-bridge/backups/SoftUEBridge-1.41.0")
 
+
 def test_runtime_smoke_plan_is_cli_and_ci_friendly(tmp_path: Path) -> None:
     exe = tmp_path / "Windows" / "Sample.exe"
     exe.parent.mkdir()
@@ -226,6 +239,7 @@ def test_runtime_smoke_plan_is_cli_and_ci_friendly(tmp_path: Path) -> None:
         "collect-diagnostics",
     ]
     assert plan["ci_friendly"] is True
+
 
 def test_runtime_smoke_plan_requires_executable_or_attach_url() -> None:
     with pytest.raises(ValueError, match="executable or bridge_url"):

@@ -24,6 +24,7 @@ When a new CLI tool, MCP-exposed tool, or new inspect/diff section is added, ext
 - MCP mode also requires — `pip install soft-ue-cli[mcp]`
 - UE running with SoftUEBridge enabled and reachable
 - Optional AnimBlueprint smoke coverage: set `SOFT_UE_TEST_ANIM_BP=/Game/.../ABP_Test`
+- Optional merged-cloth weight-map smoke: set `SOFT_UE_TEST_CLOTH_MESH`, `SOFT_UE_TEST_CLOTH_ASSET_NAME`, and at least three comma-separated `SOFT_UE_TEST_CLOTH_SECTION_INDICES` values.
 
 ## Usage
 
@@ -895,6 +896,26 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
 
     run_test("find-references blueprint", "find-references",
              {"asset_path": bp_path, "type": "asset"}, has("referencers"))
+    _fib_args = {"asset_path": bp_path, "type": "node", "node_class": "K2Node"}
+    _fib_t0 = time.time()
+    try:
+        _fib_result = caller("find-references", _fib_args, None)
+        # A successful result must be backed by a match in the known fixture path
+        # or by at least one Blueprint that was actually traversed.
+        _fib_passed = (
+            _fib_result.get("result_complete") is True
+            and (
+                _fib_result.get("count", 0) > 0
+                or _fib_result.get("blueprints_searched", 0) > 0
+            )
+        )
+        _fib_error = None if _fib_passed else f"check failed: {json.dumps(_fib_result)[:200]}"
+    except Exception as exc:
+        _fib_result = None
+        _fib_error = str(exc)[:300]
+        _fib_passed = "incomplete_fib_index" in _fib_error
+    _record("find-references node completeness", "find-references", _fib_args,
+            _fib_passed, int((time.time() - _fib_t0) * 1000), _fib_error)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Suite 11: Materials
@@ -1034,6 +1055,44 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
              timeout=PIE_TIMEOUT)
     time.sleep(4)
     run_test("pie-session status", "pie-session", {"action": "status"}, has("state"), timeout=PIE_TIMEOUT)
+    _pie_discovery_started = time.time()
+    _pie_discovery_valid = False
+    try:
+        _pie_state = caller("pie-session", {"action": "get-state"}, PIE_TIMEOUT)
+        _pie_worlds = _pie_state.get("worlds", [])
+        if not has("world_count")(_pie_state):
+            raise ValueError("pie-session get-state omitted world_count")
+        if not isinstance(_pie_worlds, list):
+            raise ValueError("pie-session get-state returned non-list worlds")
+        if not _pie_worlds:
+            raise ValueError("pie-session get-state returned no PIE worlds")
+        _pie_discovery_valid = True
+        _record("pie-session get-state worlds", "pie-session", {"action": "get-state"},
+                True, int((time.time() - _pie_discovery_started) * 1000), None)
+    except Exception as exc:
+        _pie_worlds = []
+        _record("pie-session get-state worlds", "pie-session", {"action": "get-state"},
+                False, int((time.time() - _pie_discovery_started) * 1000), str(exc)[:300])
+
+    if _pie_discovery_valid:
+        _first_pie_world = _pie_worlds[0]
+        _first_pie_id = _first_pie_world.get("pie_instance")
+        run_test("exec-console-command first discovered PIE instance", "exec-console-command",
+                 {"command": "stat fps", "world": "pie", "pie_instance": _first_pie_id},
+                 lambda r: r.get("pie_instance") == _first_pie_id
+                 and r.get("world_name") == _first_pie_world.get("world_name"), timeout=PIE_TIMEOUT)
+
+    if len(_pie_worlds) >= 2:
+        _second_pie_world = _pie_worlds[1]
+        _second_pie_id = _second_pie_world.get("pie_instance")
+        run_test("exec-console-command second discovered PIE instance", "exec-console-command",
+                 {"command": "stat fps", "world": "pie", "pie_instance": _second_pie_id},
+                 lambda r: r.get("pie_instance") == _second_pie_id
+                 and r.get("world_name") == _second_pie_world.get("world_name")
+                 and r.get("world_name") != _first_pie_world.get("world_name"), timeout=PIE_TIMEOUT)
+    elif len(_pie_worlds) == 1:
+        _record("exec-console-command second discovered PIE instance", "exec-console-command", {},
+                True, 0, "skipped: fewer than two PIE worlds")
     run_test("pie-tick explicit delta", "pie-tick", {
         "frames": 2,
         "delta": 0.0166666,
@@ -1044,6 +1103,10 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
              timeout=PIE_TIMEOUT)
     run_test("exec-console-command stat fps", "exec-console-command",
              {"command": "stat fps", "world": "pie"}, has("success"), timeout=PIE_TIMEOUT)
+    run_test("exec-console-command targeted result", "exec-console-command",
+             {"command": "stat fps", "world": "pie"},
+             lambda r: has("pie_instance")(r) and has("world_name")(r) and has("net_mode")(r),
+             timeout=PIE_TIMEOUT)
     run_test("inspect-pawn-possession", "inspect-pawn-possession",
              {"world": "pie"}, has("pawns"), timeout=PIE_TIMEOUT)
     run_test("verify-umg-workflow preview widget", "verify-umg-workflow", {
@@ -1335,7 +1398,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_cli("cloth create help", "cloth", "create", "--help",
             check_stdout=lambda s: "cloth create" in s and "--section-index" in s and "--bind" in s)
     run_cli("cloth apply-weightmap help", "cloth", "apply-weightmap", "--help",
-            check_stdout=lambda s: "cloth apply-weightmap" in s and "--rule" in s and "vertex-color" in s and "bone-distance" in s and "spatial" in s and "--z-min" in s and "anim-drive-stiffness" in s)
+            check_stdout=lambda s: "cloth apply-weightmap" in s and "--rule" in s and "vertex-color" in s and "bone-distance" in s and "spatial" in s and "--z-min" in s and "edge-stiffness" in s and "--section-index" in s)
     run_cli("cloth weld help", "cloth", "weld", "--help",
             check_stdout=lambda s: "cloth weld" in s and "--tolerance" in s and "--z-min" in s)
     run_cli("blueprint graph inspect help", "blueprint", "graph", "inspect", "--help",
@@ -1708,10 +1771,36 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     if _cloth_mesh:
         run_test("cloth-query smoke", "cloth-query", {
             "skeletal_mesh": _cloth_mesh,
-        }, lambda r: r.get("success") is True and "cloth_assets" in r and "bindings" in r)
+        }, lambda r: r.get("success") is True
+           and "cloth_assets" in r and "bindings" in r
+           and "binding_warnings" in r and "binding_warning_count" in r)
     else:
         _record("cloth-query smoke", "cloth-query", {},
                 True, 0, "skipped: set SOFT_UE_TEST_CLOTH_MESH")
+
+    _cloth_asset_name = os.environ.get("SOFT_UE_TEST_CLOTH_ASSET_NAME", "").strip()
+    try:
+        _cloth_sections = [
+            int(value.strip())
+            for value in os.environ.get("SOFT_UE_TEST_CLOTH_SECTION_INDICES", "").split(",")
+            if value.strip()
+        ]
+    except ValueError:
+        _cloth_sections = []
+    if _cloth_mesh and _cloth_asset_name and len(_cloth_sections) >= 3:
+        run_cli("cloth apply-weightmap extended section smoke",
+                "cloth", "apply-weightmap", _cloth_mesh,
+                "--asset-name", _cloth_asset_name,
+                "--target", "edge-stiffness",
+                "--rule", "constant", "--value", "0.5",
+                "--section-index", f"{_cloth_sections[0]},{_cloth_sections[1]}",
+                "--section-index", str(_cloth_sections[2]),
+                check_stdout=lambda s: '"success": true' in s
+                and '"target": "edge-stiffness"' in s
+                and '"section_indices"' in s)
+    else:
+        _record("cloth apply-weightmap extended section smoke", "cloth-apply-weightmap", {},
+                True, 0, "skipped: set SOFT_UE_TEST_CLOTH_MESH/ASSET_NAME and at least three SECTION_INDICES")
 
     run_test("call-function transient native", "call-function", {
         "class_path": "/Script/Engine.Actor",

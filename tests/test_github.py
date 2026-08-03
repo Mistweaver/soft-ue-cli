@@ -8,11 +8,13 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+
 from soft_ue_cli.__main__ import build_parser
 from soft_ue_cli.github import _resolve_token, create_issue
 
 _PATCH_SUBPROCESS = "soft_ue_cli.github.subprocess.run"
 _PATCH_HTTPX_POST = "soft_ue_cli.github.httpx.post"
+
 
 def _mock_issue_response(number: int) -> httpx.Response:
     """Build a mock 201 response for a created GitHub issue."""
@@ -25,6 +27,7 @@ def _mock_issue_response(number: int) -> httpx.Response:
         request=httpx.Request("POST", "https://api.github.com"),
     )
 
+
 def _mock_error_response(status: int, message: str) -> httpx.Response:
     """Build a mock error response from the GitHub API."""
     return httpx.Response(
@@ -33,11 +36,14 @@ def _mock_error_response(status: int, message: str) -> httpx.Response:
         request=httpx.Request("POST", "https://api.github.com"),
     )
 
+
 # -- _resolve_token ------------------------------------------------------------
+
 
 def test_resolve_token_env_var(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_envtoken123")
     assert _resolve_token() == "ghp_envtoken123"
+
 
 def test_resolve_token_gh_cli(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -47,6 +53,7 @@ def test_resolve_token_gh_cli(monkeypatch):
         )
         assert _resolve_token() == "ghp_ghcli456"
 
+
 def test_resolve_token_strips_whitespace(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     with patch(_PATCH_SUBPROCESS) as mock_run:
@@ -55,12 +62,14 @@ def test_resolve_token_strips_whitespace(monkeypatch):
         )
         assert _resolve_token() == "ghp_spaces"
 
+
 def test_resolve_token_gh_not_installed(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     with patch(_PATCH_SUBPROCESS, side_effect=FileNotFoundError):
         with pytest.raises(SystemExit) as exc:
             _resolve_token()
         assert exc.value.code == 1
+
 
 def test_resolve_token_gh_cli_fails(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -69,12 +78,14 @@ def test_resolve_token_gh_cli_fails(monkeypatch):
             _resolve_token()
         assert exc.value.code == 1
 
+
 def test_resolve_token_gh_cli_timeout(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     with patch(_PATCH_SUBPROCESS, side_effect=subprocess.TimeoutExpired(["gh", "auth", "token"], 10)):
         with pytest.raises(SystemExit) as exc:
             _resolve_token()
         assert exc.value.code == 1
+
 
 def test_resolve_token_gh_returns_empty(monkeypatch):
     """gh auth token succeeds but returns empty output."""
@@ -87,13 +98,16 @@ def test_resolve_token_gh_returns_empty(monkeypatch):
             _resolve_token()
         assert exc.value.code == 1
 
+
 # -- create_issue --------------------------------------------------------------
+
 
 def test_create_issue_success(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     with patch(_PATCH_HTTPX_POST, return_value=_mock_issue_response(42)):
         result = create_issue("Bug title", "Bug body", ["bug"])
     assert result == {"issue_number": 42, "url": "https://github.com/softdaddy-o/soft-ue-cli/issues/42"}
+
 
 def test_create_issue_401(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_expired")
@@ -102,12 +116,14 @@ def test_create_issue_401(monkeypatch):
             create_issue("title", "body", [])
         assert exc.value.code == 1
 
+
 def test_create_issue_403_rate_limit(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     with patch(_PATCH_HTTPX_POST, return_value=_mock_error_response(403, "API rate limit exceeded")):
         with pytest.raises(SystemExit) as exc:
             create_issue("title", "body", [])
         assert exc.value.code == 1
+
 
 def test_create_issue_api_error(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
@@ -116,12 +132,14 @@ def test_create_issue_api_error(monkeypatch):
             create_issue("title", "body", [])
         assert exc.value.code == 1
 
+
 def test_create_issue_connect_error(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     with patch(_PATCH_HTTPX_POST, side_effect=httpx.ConnectError("connection refused")):
         with pytest.raises(SystemExit) as exc:
             create_issue("title", "body", [])
         assert exc.value.code == 1
+
 
 def test_create_issue_timeout(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
@@ -130,7 +148,9 @@ def test_create_issue_timeout(monkeypatch):
             create_issue("title", "body", [])
         assert exc.value.code == 1
 
+
 # -- cmd_report_bug body building -----------------------------------------------
+
 
 def test_report_bug_body_with_system_info(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
@@ -159,6 +179,7 @@ def test_report_bug_body_with_system_info(monkeypatch):
     assert "OS:" in call_body
     assert "Bridge: reachable" in call_body
 
+
 def test_report_bug_body_no_system_info(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     parser = build_parser()
@@ -172,6 +193,7 @@ def test_report_bug_body_no_system_info(monkeypatch):
 
     call_body = mock_post.call_args.kwargs["json"]["body"]
     assert "## System Information" not in call_body
+
 
 def test_report_bug_optional_fields_omitted(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
@@ -190,7 +212,9 @@ def test_report_bug_optional_fields_omitted(monkeypatch):
     assert "## Expected Behavior" not in call_body
     assert "## Actual Behavior" not in call_body
 
+
 # -- cmd_request_feature --------------------------------------------------------
+
 
 def test_request_feature_body(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
@@ -210,6 +234,7 @@ def test_request_feature_body(monkeypatch):
     assert "## Use Case" in call_body
     assert "LLM agents need to revert mistakes" in call_body
 
+
 def test_request_feature_labels_enhancement(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     parser = build_parser()
@@ -223,6 +248,7 @@ def test_request_feature_labels_enhancement(monkeypatch):
 
     call_labels = mock_post.call_args.kwargs["json"]["labels"]
     assert call_labels == ["enhancement"]
+
 
 def test_request_feature_labels_nice_to_have(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")

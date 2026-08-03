@@ -49,6 +49,19 @@ CLOTH_LEGACY_WEIGHT_MAP_TARGETS = [
     "anim-drive-damping",
     "backstop-distance",
     "backstop-radius",
+    "tether-ends-mask",
+    "tether-stiffness",
+    "tether-scale",
+    "drag",
+    "lift",
+    "edge-stiffness",
+    "bending-stiffness",
+    "area-stiffness",
+    "buckling-stiffness",
+    "pressure",
+    "flatness-ratio",
+    "outer-drag",
+    "outer-lift",
 ]
 
 
@@ -236,6 +249,13 @@ def _print_json(data: object) -> None:
         print(text)
     except UnicodeEncodeError:
         print(json.dumps(data, indent=2, ensure_ascii=True))
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def cmd_commands(args: argparse.Namespace) -> None:
@@ -2628,6 +2648,10 @@ def cmd_exec_console_command(args: argparse.Namespace) -> None:
     }
     if args.player_index is not None:
         arguments["player_index"] = args.player_index
+    if args.pie_instance is not None:
+        if args.world != "pie":
+            raise SystemExit("error: --pie-instance requires --world pie")
+        arguments["pie_instance"] = args.pie_instance
     _print_json(_run_tool("exec-console-command", arguments))
 
 
@@ -4131,6 +4155,15 @@ def cmd_cloth_apply_weightmap(args: argparse.Namespace) -> None:
         "target": args.target,
         "rule": args.rule,
     })
+    native_section_indices = getattr(args, "section_indices", None)
+    if native_section_indices is not None:
+        try:
+            arguments["section_indices"] = [int(value) for value in native_section_indices]
+        except (TypeError, ValueError):
+            print("error: section_indices expects integer section indices", file=sys.stderr)
+            sys.exit(1)
+    elif getattr(args, "section_index", None):
+        arguments["section_indices"] = _parse_cloth_section_indices(args.section_index)
     if args.value is not None:
         arguments["value"] = args.value
     if args.channel:
@@ -4767,6 +4800,7 @@ def cmd_check_setup(args: argparse.Namespace) -> None:
 def cmd_knowledge(args: argparse.Namespace) -> None:
     """Query the optional knowledge server (RAG)."""
     print("Coming soon. Follow https://github.com/softdaddy-o/soft-ue-cli for updates.")
+
 
 def _load_expert_context_evidence(path: str | None) -> list[dict[str, str]]:
     if not path:
@@ -7147,12 +7181,14 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
             "EXAMPLES:\n"
             "  soft-ue-cli exec-console-command stat fps\n"
             "  soft-ue-cli exec-console-command --world editor r.Streaming.PoolSize 4000\n"
-            "  soft-ue-cli exec-console-command --player-index 0 MyGame.MyCommand arg1 arg2"
+            "  soft-ue-cli exec-console-command --pie-instance 1 stat net\n"
+            "  soft-ue-cli exec-console-command --pie-instance 1 --player-index 0 MyGame.MyCommand arg1 arg2"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_ecc.add_argument("--world", choices=["pie", "editor", "game"], default="pie", help="World context (default: pie)")
-    p_ecc.add_argument("--player-index", type=int, metavar="N", help="Player controller index when executing in PIE/game")
+    p_ecc.add_argument("--pie-instance", type=int, metavar="N", help="FWorldContext::PIEInstance identifying the PIE world")
+    p_ecc.add_argument("--player-index", type=int, metavar="N", help="Local player controller index inside the selected PIE/game world")
     p_ecc.add_argument("--auto-start-pie", action="store_true", help="Start PIE automatically when --world pie is requested")
     p_ecc.add_argument("--map", metavar="PATH", help="Map to load if --auto-start-pie starts a PIE session")
     p_ecc.add_argument("--pie-timeout", type=float, default=30.0, metavar="SEC", help="Timeout for PIE auto-start (default: 30)")
@@ -7619,12 +7655,17 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
 
     p_fr = sub.add_parser(
         "find-references",
-        help="Find asset references, variable usages, or Blueprint node usages.",
+        help=(
+            "Find asset references, variable usages, or Blueprint node usages; "
+            "reject incomplete node results."
+        ),
         description=(
             "Types:\n"
             "  asset    — find assets that reference the given asset\n"
             "  property — find where a Blueprint variable is used (requires --variable-name)\n"
             "  node     — find Blueprint nodes by class (requires --node-class)\n\n"
+            "Node searches reject incomplete results when Find in Blueprints indexing is still "
+            "in progress and fallback candidates cannot be completely traversed. Finish indexing and retry.\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli find-references asset /Game/Textures/T_Player\n"
             "  soft-ue-cli find-references property /Game/Blueprints/BP_Hero --variable-name Health\n"
@@ -7637,7 +7678,12 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_fr.add_argument("--variable-name", metavar="NAME", help="Variable name to find usages of (for type=property)")
     p_fr.add_argument("--node-class", metavar="CLASS", help="Node class to search for (for type=node)")
     p_fr.add_argument("--function-name", metavar="NAME", help="Function name filter for CallFunction nodes")
-    p_fr.add_argument("--limit", type=int, metavar="N", help="Max results (default: 100)")
+    p_fr.add_argument(
+        "--limit",
+        type=_positive_int,
+        metavar="N",
+        help="Max results (default: 100; must be positive)",
+    )
     p_fr.add_argument("--search", metavar="PATTERN", help="Filter results by asset name (wildcards)")
     p_fr.set_defaults(func=cmd_find_references)
 
@@ -8245,6 +8291,7 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_cloth_apply_weightmap.add_argument("--asset-name", required=True, metavar="NAME", help="Clothing asset object name")
     p_cloth_apply_weightmap.add_argument("--lod-index", type=int, default=0, metavar="LOD", help="Clothing LOD index (default: 0)")
     p_cloth_apply_weightmap.add_argument("--target", choices=CLOTH_LEGACY_WEIGHT_MAP_TARGETS, default="max-distance", help="Weight map target")
+    p_cloth_apply_weightmap.add_argument("--section-index", action="append", default=[], metavar="N[,N...]", help="Restrict updates to merged source section membership; repeat or use comma-separated values")
     p_cloth_apply_weightmap.add_argument("--rule", choices=["constant", "vertex-color", "bone-distance", "spatial"], required=True, help="Weight map generation rule")
     p_cloth_apply_weightmap.add_argument("--value", type=float, help="Constant value for --rule constant or selected vertices with --rule spatial")
     p_cloth_apply_weightmap.add_argument("--channel", choices=["red", "green", "blue", "alpha"], help="Vertex color channel for --rule vertex-color")

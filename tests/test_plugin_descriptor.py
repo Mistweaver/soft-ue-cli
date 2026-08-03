@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _repo_root() -> Path:
     for parent in Path(__file__).resolve().parents:
@@ -31,6 +33,13 @@ def _plugin_source_path(relative: str) -> Path:
     if monorepo_path.exists():
         return monorepo_path
     return root / "soft_ue_cli" / "plugin_data" / "SoftUEBridge" / relative
+
+
+def _monorepo_agent_guide() -> Path:
+    guide = _repo_root() / "AGENTS.md"
+    if not guide.exists():
+        pytest.skip("monorepo-only AGENTS.md is not part of the public export")
+    return guide
 
 
 def _plugin_root() -> Path:
@@ -397,7 +406,7 @@ def test_bridge_registry_remove_tools_does_not_shadow_singleton_instance():
 
 
 def test_agent_guide_warns_new_tools_against_static_registration_macro():
-    guide = Path(__file__).parents[2].joinpath("AGENTS.md").read_text(encoding="utf-8")
+    guide = _monorepo_agent_guide().read_text(encoding="utf-8")
 
     assert "Do not use REGISTER_BRIDGE_TOOL" in guide
     assert "RegisterToolClass" in guide
@@ -710,6 +719,9 @@ def test_cloth_tools_registered_explicitly_and_use_clothing_asset_apis():
     source = _plugin_source_path(
         "Source/SoftUEBridgeEditor/Private/Tools/Cloth/ClothTools.cpp"
     ).read_text(encoding="utf-8")
+    weightmap_source = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Utils/BridgeLegacyClothWeightMaps.cpp"
+    ).read_text(encoding="utf-8")
 
     assert "Tools/Cloth/ClothTools.h" in module
     for cls in (
@@ -736,29 +748,32 @@ def test_cloth_tools_registered_explicitly_and_use_clothing_asset_apis():
     assert "cloth-create" in header
     assert "cloth-weld" in header
     assert "cloth-apply-weightmap" in header
-    assert "GetAllMeshClothingAssetBindings" in source
+    assert '#include "Tools/Cloth/BridgeClothBindings.h"' in source
+    assert "BridgeClothBindings::Collect" in source
+    assert "GetAllMeshClothingAssetBindings" not in source
+    assert "GetAllLodMeshClothingAssetBindings" not in source
     assert "CreateFromSkeletalMesh" in source
     assert "BindToSkeletalMesh" in source
     assert "ApplyParameterMasks" in source
     assert "EWeightMapTargetCommon::MaxDistance" in source
     assert "EWeightMapTargetCommon::AnimDriveStiffness" in source
-    assert "EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED" in source
-    assert "EWeightMapTargetCommon::BackstopDistance" in source
-    assert "EWeightMapTargetCommon::BackstopRadius" in source
-    assert "ResolveLegacyWeightMapTarget" in source
+    assert "FBridgeLegacyWeightMapTarget" in source
+    assert "ResolveBridgeLegacyWeightMapTarget" in source
+    assert "GetBridgeLegacyWeightMapTargetNames" in source
+    assert "ReadBridgeSourceSectionSelection" in source
     assert "bone-distance" in source
     assert "spatial" in source
     assert "FindBoneIndex" in source
     assert "root_bone is required" in source
     assert "ApplyFalloffCurve" in source
     assert "BuildSpatialWeightMapValues" in source
-    assert "ApplyLegacyWeightMapToLodData" in source
+    assert "ApplyBridgeLegacyWeightMapToLodData" in source
     assert "PreviewLodData" in source
     assert "GenerateLegacyClothRenderMappings" in source
     assert "RestorePhysicalOnlyLegacyClothWeightMaps" in source
     assert "ApplyParameterMasks(false)" in source
     assert "ApplyLegacyClothRenderMappings(Mesh, Asset, GeneratedMappings, false)" in source
-    assert "PointWeightMap.bEnabled" in source
+    assert "PointWeightMap.bEnabled" in weightmap_source
     assert "remove_from_mesh cannot be combined with bind" in source
     assert "return FBridgeToolResult::Error(SaveError)" in source
 
@@ -962,7 +977,7 @@ def test_bridge_health_includes_process_identity_for_restart_detection():
 
 
 def test_agent_guide_requires_deferred_registration_for_new_uclass_tools():
-    guide = Path(__file__).parents[2].joinpath("AGENTS.md").read_text(encoding="utf-8")
+    guide = _monorepo_agent_guide().read_text(encoding="utf-8")
 
     assert "OnPostEngineInit" in guide
     assert "newly added UCLASS" in guide
@@ -1220,7 +1235,7 @@ def test_set_node_position_supports_customizable_object_graphs():
 
 
 def test_live_smoke_skill_expects_slot_wiring_macro():
-    content = (_repo_root() / "cli" / "soft_ue_cli" / "skills" / "test-tools.md").read_text(encoding="utf-8")
+    content = (_repo_root() / "soft_ue_cli" / "skills" / "test-tools.md").read_text(encoding="utf-8")
 
     assert "wire-customizable-object-slot-from-table" in content
     assert "run-python-script argv args" in content

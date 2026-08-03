@@ -1,6 +1,7 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/Write/AddGraphNodeTool.h"
+#include "Utils/BridgeAnimNodeProperties.h"
 #include "Utils/BridgeAssetModifier.h"
 #include "Utils/BridgeGraphLayoutUtil.h"
 #include "Utils/BridgeJsonObjectUtils.h"
@@ -664,11 +665,13 @@ TArray<FString> UAddGraphNodeTool::ApplyNodeProperties(UObject* Node, const TSha
 	}
 
 	// Animation graph nodes (e.g. AnimGraphNode_SpringBone) store their data in an inner
-	// FAnimNode_* struct member called "Node". Check if this struct exists so we can
-	// auto-resolve properties through it when direct lookup fails.
-	FStructProperty* InnerNodeProp = CastField<FStructProperty>(Node->GetClass()->FindPropertyByName(TEXT("Node")));
-	void* InnerNodeContainer = InnerNodeProp ? InnerNodeProp->ContainerPtrToValuePtr<void>(Node) : nullptr;
-	UScriptStruct* InnerNodeStruct = InnerNodeProp ? InnerNodeProp->Struct : nullptr;
+	// FAnimNode_* struct member (conventionally "Node"). Resolve it once so properties can
+	// be routed through it when direct lookup fails.
+	const FBridgeInnerAnimNode InnerNode = FBridgeAnimNodeProperties::FindInnerAnimNode(Node);
+
+	// Property names that resolved to neither a UPROPERTY path nor the inner anim node struct.
+	// Tracked separately from Errors so the pin fallback below never has to parse message text.
+	TArray<FString> Unresolved;
 
 	for (const auto& Pair : Properties->Values)
 	{
@@ -685,27 +688,17 @@ TArray<FString> UAddGraphNodeTool::ApplyNodeProperties(UObject* Node, const TSha
 			FString FindError;
 			if (!FBridgeAssetModifier::FindPropertyByPath(Node, PropertyName, Property, Container, FindError))
 			{
-				// For animation graph nodes, try the inner "Node" struct member
-				if (InnerNodeStruct && InnerNodeContainer)
+				// For animation graph nodes, resolve through the inner FAnimNode_* struct member,
+				// with or without a leading "Node." prefix (e.g. "BoneToModify.BoneName").
+				if (InnerNode.IsValid())
 				{
-					Property = InnerNodeStruct->FindPropertyByName(*PropertyName);
-					if (Property)
-					{
-						Container = InnerNodeContainer;
-					}
-					else
-					{
-						// Try nested path within the inner Node struct (e.g. "BoneToModify.BoneName")
-						FString InnerPath = FString::Printf(TEXT("Node.%s"), *PropertyName);
-						FBridgeAssetModifier::FindPropertyByPath(Node, InnerPath, Property, Container, FindError);
-					}
+					FBridgeAnimNodeProperties::ResolveInnerAnimNodePropertyPath(
+						Node, PropertyName, Property, Container, FindError);
 				}
 
 				if (!Property)
 				{
-					FString Msg = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
-					UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
-					Errors.Add(Msg);
+					Unresolved.Add(PropertyName);
 					continue;
 				}
 			}
@@ -725,56 +718,66 @@ TArray<FString> UAddGraphNodeTool::ApplyNodeProperties(UObject* Node, const TSha
 	// Anim graph nodes expose some values (Alpha, BlendWeight, etc.) as pins
 	// with DefaultValue strings, not as UPROPERTY members.
 	UEdGraphNode* GraphNode = Cast<UEdGraphNode>(Node);
+	TArray<FString> PinNames;
 	if (GraphNode)
 	{
-		TArray<FString> ResolvedByPin;
-		for (const FString& ErrMsg : Errors)
+		for (UEdGraphPin* Pin : GraphNode->Pins)
 		{
-			// Extract property name from "Property not found: X"
-			if (!ErrMsg.StartsWith(TEXT("Property not found: ")))
+			if (FBridgeAnimNodeProperties::IsSettableGraphPin(Pin))
+			{
+				PinNames.Add(Pin->PinName.ToString());
+			}
+		}
+
+		for (int32 Index = Unresolved.Num() - 1; Index >= 0; --Index)
+		{
+			const FString PropName = Unresolved[Index];
+			if (PropName.IsEmpty())
 			{
 				continue;
 			}
-			FString PropName = ErrMsg.RightChop(20);
-			if (PropName.IsEmpty()) continue;
 
 			// Look for a matching pin
 			for (UEdGraphPin* Pin : GraphNode->Pins)
 			{
-				if (Pin && Pin->PinName.ToString() == PropName)
+				if (!FBridgeAnimNodeProperties::IsSettableGraphPin(Pin) || Pin->PinName.ToString() != PropName)
 				{
-					const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropName);
-					if (ValuePtr.IsValid())
-					{
-						FString StringValue;
-						if (ValuePtr->Type == EJson::Number)
-						{
-							StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
-						}
-						else if (ValuePtr->Type == EJson::Boolean)
-						{
-							StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
-						}
-						else
-						{
-							StringValue = ValuePtr->AsString();
-						}
-
-						Pin->DefaultValue = StringValue;
-						ResolvedByPin.Add(PropName);
-						UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
-					}
-					break;
+					continue;
 				}
+
+				const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropName);
+				if (ValuePtr.IsValid())
+				{
+					FString StringValue;
+					if (ValuePtr->Type == EJson::Number)
+					{
+						StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
+					}
+					else if (ValuePtr->Type == EJson::Boolean)
+					{
+						StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
+					}
+					else
+					{
+						StringValue = ValuePtr->AsString();
+					}
+
+					Pin->DefaultValue = StringValue;
+					Unresolved.RemoveAt(Index);
+					UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
+				}
+				break;
 			}
 		}
+	}
 
-		// Remove errors for properties resolved as pin defaults
-		for (const FString& Resolved : ResolvedByPin)
-		{
-			FString ErrToRemove = FString::Printf(TEXT("Property not found: %s"), *Resolved);
-			Errors.Remove(ErrToRemove);
-		}
+	// Whatever is still unresolved is reported with the node class, the inner anim node
+	// struct that was actually searched, and the fields available on it.
+	for (const FString& PropName : Unresolved)
+	{
+		const FString Msg = FBridgeAnimNodeProperties::DescribeUnresolvedProperty(Node, PropName, PinNames);
+		UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
+		Errors.Add(Msg);
 	}
 
 	return Errors;

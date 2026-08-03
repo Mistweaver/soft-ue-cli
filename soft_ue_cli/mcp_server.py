@@ -139,6 +139,16 @@ def _make_tool_fn(tool_name: str, params: dict | None = None):
         # keeping explicit values that must be translated into bridge args.
         arguments = {k: v for k, v in kwargs.items() if v is not None}
 
+        for name, value in arguments.items():
+            prop = (params or {}).get("properties", {}).get(name, {})
+            minimum = prop.get("minimum")
+            if minimum is not None and value < minimum:
+                return json.dumps(
+                    {"error": f"Parameter '{name}' must be at least {minimum}."},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
         # MCP exposes argparse dest names (no_auto_position). The bridge expects
         # auto_position=true/false, with false meaning "disable auto placement".
         if arguments.pop("no_auto_position", False):

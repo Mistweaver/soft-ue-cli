@@ -1,6 +1,7 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/Cloth/ClothTools.h"
+#include "Tools/Cloth/BridgeClothBindings.h"
 
 #include "BoneWeights.h"
 #include "Animation/Skeleton.h"
@@ -31,8 +32,18 @@
 #include "Utils/ClothingMeshUtils.h"
 #include "Utils/BridgeAssetModifier.h"
 #include "Utils/BridgeJsonObjectUtils.h"
+#include "Utils/BridgeLegacyClothWeightMaps.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+
+static FBridgeLegacyWeightMapTarget MakeTestLegacyWeightMapTarget(EWeightMapTargetCommon Id, const TCHAR* CliName, const TCHAR* MapName)
+{
+	FBridgeLegacyWeightMapTarget Target;
+	Target.Id = static_cast<uint8>(Id);
+	Target.CliName = CliName;
+	Target.MapName = FName(MapName);
+	return Target;
+}
 #include "Misc/AutomationTest.h"
 #endif
 
@@ -189,11 +200,6 @@ void ClearOriginalSectionClothData(FSkelMeshSourceSectionUserData& OriginalSecti
 	OriginalSectionData.ClothingData.AssetLodIndex = INDEX_NONE;
 }
 
-FString LegacyWeightMapTargetToCliName(EWeightMapTargetCommon Target);
-FName LegacyWeightMapTargetToPointMapName(EWeightMapTargetCommon Target);
-bool ResolveLegacyWeightMapTarget(const FString& TargetName, EWeightMapTargetCommon& OutTarget, FString& OutCanonicalName, FString& OutError);
-void ConfigureWeightMapMetadata(FPointWeightMap& WeightMap, EWeightMapTargetCommon Target);
-
 bool BindClothAssetToSection(
 	USkeletalMesh* Mesh,
 	UClothingAssetBase* Asset,
@@ -293,6 +299,7 @@ bool BuildMergedClothLodFromSections(
 	TArray<FColor> MergedColors;
 	TArray<FClothVertBoneData> MergedBoneData;
 	TArray<uint32> MergedIndices;
+	TMap<int32, TArray<bool>> SourceSectionMemberships;
 	int32 MaxBoneInfluences = 0;
 	const float WeldToleranceSquared = FMath::Square(FMath::Max(0.0f, WeldTolerance));
 
@@ -356,6 +363,11 @@ bool BuildMergedClothLodFromSections(
 				MergedBoneData.Add(BoneData);
 			}
 
+			RecordBridgeSourceSectionMembership(
+				SourceSectionMemberships,
+				SectionIndex,
+				MergedVertexIndex,
+				UniquePositions.Num());
 			SectionLocalToMerged[LocalVertexIndex] = MergedVertexIndex;
 		}
 
@@ -392,14 +404,23 @@ bool BuildMergedClothLodFromSections(
 		PhysMesh.Indices[IndexIndex] = MergedIndices[IndexIndex];
 	}
 
-	FPointWeightMap& PhysMeshMaxDistances = PhysMesh.AddWeightMap(EWeightMapTargetCommon::MaxDistance);
+	FBridgeLegacyWeightMapTarget MaxDistanceTarget;
+	FString TargetError;
+	if (!ResolveBridgeLegacyWeightMapTarget(TEXT("max-distance"), MaxDistanceTarget, TargetError))
+	{
+		OutError = TargetError;
+		return false;
+	}
+	const EWeightMapTargetCommon MaxDistanceKey = static_cast<EWeightMapTargetCommon>(MaxDistanceTarget.Id);
+	FPointWeightMap& PhysMeshMaxDistances = PhysMesh.AddWeightMap(MaxDistanceKey);
 	PhysMeshMaxDistances.Initialize(PhysMesh.Vertices.Num());
-	ConfigureWeightMapMetadata(PhysMeshMaxDistances, EWeightMapTargetCommon::MaxDistance);
+	ConfigureBridgeLegacyWeightMapMetadata(PhysMeshMaxDistances, MaxDistanceTarget);
 
 	LodData.PointWeightMaps.AddDefaulted();
 	FPointWeightMap& LodMaxDistances = LodData.PointWeightMaps.Last();
-	LodMaxDistances.Initialize(PhysMeshMaxDistances, EWeightMapTargetCommon::MaxDistance);
-	ConfigureWeightMapMetadata(LodMaxDistances, EWeightMapTargetCommon::MaxDistance);
+	LodMaxDistances.Initialize(PhysMeshMaxDistances, MaxDistanceKey);
+	ConfigureBridgeLegacyWeightMapMetadata(LodMaxDistances, MaxDistanceTarget);
+	WriteBridgeSourceSectionMaps(LodData, SourceSectionMemberships);
 
 	PhysMesh.MaxBoneWeights = MaxBoneInfluences;
 	PhysMesh.CalculateNumInfluences();
@@ -456,84 +477,6 @@ bool BindClothAssetToSections(
 	}
 	CommonAsset->LodMap[LodIndex] = ClothLodIndex;
 	return true;
-}
-
-FString LegacyWeightMapTargetToCliName(EWeightMapTargetCommon Target)
-{
-	switch (Target)
-	{
-	case EWeightMapTargetCommon::MaxDistance:
-		return TEXT("max-distance");
-	case EWeightMapTargetCommon::AnimDriveStiffness:
-		return TEXT("anim-drive-stiffness");
-	case EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED:
-		return TEXT("anim-drive-damping");
-	case EWeightMapTargetCommon::BackstopDistance:
-		return TEXT("backstop-distance");
-	case EWeightMapTargetCommon::BackstopRadius:
-		return TEXT("backstop-radius");
-	default:
-		return TEXT("unknown");
-	}
-}
-
-FName LegacyWeightMapTargetToPointMapName(EWeightMapTargetCommon Target)
-{
-	switch (Target)
-	{
-	case EWeightMapTargetCommon::MaxDistance:
-		return FName(TEXT("MaxDistance"));
-	case EWeightMapTargetCommon::AnimDriveStiffness:
-		return FName(TEXT("AnimDriveStiffness"));
-	case EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED:
-		return FName(TEXT("AnimDriveDamping"));
-	case EWeightMapTargetCommon::BackstopDistance:
-		return FName(TEXT("BackstopDistance"));
-	case EWeightMapTargetCommon::BackstopRadius:
-		return FName(TEXT("BackstopRadius"));
-	default:
-		return NAME_None;
-	}
-}
-
-bool ResolveLegacyWeightMapTarget(const FString& TargetName, EWeightMapTargetCommon& OutTarget, FString& OutCanonicalName, FString& OutError)
-{
-	if (TargetName.Equals(TEXT("max-distance"), ESearchCase::IgnoreCase))
-	{
-		OutTarget = EWeightMapTargetCommon::MaxDistance;
-	}
-	else if (TargetName.Equals(TEXT("anim-drive-stiffness"), ESearchCase::IgnoreCase))
-	{
-		OutTarget = EWeightMapTargetCommon::AnimDriveStiffness;
-	}
-	else if (TargetName.Equals(TEXT("anim-drive-damping"), ESearchCase::IgnoreCase))
-	{
-		OutTarget = EWeightMapTargetCommon::AnimDriveDamping_DEPRECATED;
-	}
-	else if (TargetName.Equals(TEXT("backstop-distance"), ESearchCase::IgnoreCase))
-	{
-		OutTarget = EWeightMapTargetCommon::BackstopDistance;
-	}
-	else if (TargetName.Equals(TEXT("backstop-radius"), ESearchCase::IgnoreCase))
-	{
-		OutTarget = EWeightMapTargetCommon::BackstopRadius;
-	}
-	else
-	{
-		OutError = TEXT("cloth: target must be max-distance, anim-drive-stiffness, anim-drive-damping, backstop-distance, or backstop-radius");
-		return false;
-	}
-	OutCanonicalName = LegacyWeightMapTargetToCliName(OutTarget);
-	return true;
-}
-
-void ConfigureWeightMapMetadata(FPointWeightMap& WeightMap, EWeightMapTargetCommon Target)
-{
-#if WITH_EDITORONLY_DATA
-	WeightMap.Name = LegacyWeightMapTargetToPointMapName(Target);
-	WeightMap.CurrentTarget = static_cast<uint8>(Target);
-	WeightMap.bEnabled = true;
-#endif
 }
 
 TSharedPtr<FJsonObject> WeightMapStatsToJson(const FPointWeightMap* WeightMap)
@@ -973,7 +916,17 @@ TSharedPtr<FJsonObject> BuildLegacyClothPreservationSummary(UClothingAssetBase* 
 		int32 WeightMapCount = 0;
 		for (const FClothLODDataCommon& LodData : Common->LodData)
 		{
-			WeightMapCount += LodData.PointWeightMaps.Num();
+			for (const FPointWeightMap& PointWeightMap : LodData.PointWeightMaps)
+			{
+#if WITH_EDITORONLY_DATA
+				if (!IsBridgeSourceSectionMap(PointWeightMap.Name))
+				{
+					++WeightMapCount;
+				}
+#else
+				++WeightMapCount;
+#endif
+			}
 			WeightMapCount += LodData.PhysicalMeshData.WeightMaps.Num();
 		}
 		PreservedJson->SetNumberField(TEXT("weight_map_count"), WeightMapCount);
@@ -1701,29 +1654,19 @@ TSharedPtr<FJsonObject> ClothAssetToJson(UClothingAssetBase* Asset)
 	return Json;
 }
 
-TArray<TSharedPtr<FJsonValue>> BuildBindingArray(USkeletalMesh* Mesh, int32 LodFilter = INDEX_NONE)
+TArray<TSharedPtr<FJsonValue>> BuildBindingArray(
+	const TArray<BridgeClothBindings::FBindingRecord>& Bindings)
 {
 	TArray<TSharedPtr<FJsonValue>> BindingValues;
-#if WITH_EDITOR
-	TArray<ClothingAssetUtils::FClothingAssetMeshBinding> Bindings;
-	if (LodFilter == INDEX_NONE)
-	{
-		ClothingAssetUtils::GetAllMeshClothingAssetBindings(Mesh, Bindings);
-	}
-	else
-	{
-		ClothingAssetUtils::GetAllLodMeshClothingAssetBindings(Mesh, Bindings, LodFilter);
-	}
-	for (const ClothingAssetUtils::FClothingAssetMeshBinding& Binding : Bindings)
+	for (const BridgeClothBindings::FBindingRecord& Binding : Bindings)
 	{
 		TSharedPtr<FJsonObject> BindingJson = MakeShared<FJsonObject>();
 		BindingJson->SetStringField(TEXT("asset_name"), Binding.Asset ? Binding.Asset->GetName() : TEXT(""));
-		BindingJson->SetNumberField(TEXT("lod_index"), Binding.LODIndex);
+		BindingJson->SetNumberField(TEXT("lod_index"), Binding.LodIndex);
 		BindingJson->SetNumberField(TEXT("section_index"), Binding.SectionIndex);
-		BindingJson->SetNumberField(TEXT("asset_lod_index"), Binding.AssetInternalLodIndex);
+		BindingJson->SetNumberField(TEXT("asset_lod_index"), Binding.AssetLodIndex);
 		BindingValues.Add(MakeShared<FJsonValueObject>(BindingJson));
 	}
-#endif
 	return BindingValues;
 }
 
@@ -1753,9 +1696,25 @@ TSharedPtr<FJsonObject> BuildQueryResult(
 	Result->SetArrayField(TEXT("cloth_assets"), AssetValues);
 	Result->SetNumberField(TEXT("cloth_asset_count"), AssetValues.Num());
 
-	TArray<TSharedPtr<FJsonValue>> Bindings = BuildBindingArray(Mesh, LodFilter);
+	const BridgeClothBindings::FBindingQueryResult BindingResult = BridgeClothBindings::Collect(Mesh, LodFilter);
+	TArray<TSharedPtr<FJsonValue>> Bindings = BuildBindingArray(BindingResult.Bindings);
 	Result->SetArrayField(TEXT("bindings"), Bindings);
 	Result->SetNumberField(TEXT("binding_count"), Bindings.Num());
+	TArray<TSharedPtr<FJsonValue>> BindingWarnings;
+	for (const BridgeClothBindings::FBindingWarning& Warning : BindingResult.Warnings)
+	{
+		TSharedPtr<FJsonObject> WarningJson = MakeShared<FJsonObject>();
+		WarningJson->SetNumberField(TEXT("lod_index"), Warning.LodIndex);
+		WarningJson->SetNumberField(TEXT("section_index"), Warning.SectionIndex);
+		WarningJson->SetStringField(TEXT("reason"), Warning.Reason);
+		if (Warning.AssetGuid.IsSet())
+		{
+			WarningJson->SetStringField(TEXT("asset_guid"), Warning.AssetGuid.GetValue().ToString(EGuidFormats::DigitsWithHyphens));
+		}
+		BindingWarnings.Add(MakeShared<FJsonValueObject>(WarningJson));
+	}
+	Result->SetArrayField(TEXT("binding_warnings"), BindingWarnings);
+	Result->SetNumberField(TEXT("binding_warning_count"), BindingWarnings.Num());
 	if (LodFilter != INDEX_NONE)
 	{
 		Result->SetNumberField(TEXT("lod_index"), LodFilter);
@@ -2005,58 +1964,17 @@ bool BuildLegacyClothWeldSelection(
 	return true;
 }
 
-void BuildExistingLegacyWeightMapValues(const FClothLODDataCommon& LodData, EWeightMapTargetCommon Target, TArray<float>& OutValues)
-{
-	const FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
-	const int32 VertexCount = PhysicalMesh.Vertices.Num();
-	OutValues.Init(0.0f, VertexCount);
-#if WITH_EDITORONLY_DATA
-	bool bFoundPointWeightMap = false;
-	for (const FPointWeightMap& PointWeightMap : LodData.PointWeightMaps)
-	{
-		if (PointWeightMap.bEnabled
-			&& PointWeightMap.CurrentTarget == static_cast<uint8>(Target))
-		{
-			bFoundPointWeightMap = true;
-			for (int32 Index = 0; Index < VertexCount; ++Index)
-			{
-				if (PointWeightMap.Values.IsValidIndex(Index))
-				{
-					OutValues[Index] = PointWeightMap.Values[Index];
-				}
-			}
-		}
-	}
-	if (bFoundPointWeightMap)
-	{
-		return;
-	}
-#endif
-	const FPointWeightMap* ExistingWeightMap = PhysicalMesh.FindWeightMap(Target);
-	if (!ExistingWeightMap)
-	{
-		return;
-	}
-	for (int32 Index = 0; Index < VertexCount; ++Index)
-	{
-		if (ExistingWeightMap->Values.IsValidIndex(Index))
-		{
-			OutValues[Index] = ExistingWeightMap->Values[Index];
-		}
-	}
-}
-
 bool BuildSpatialWeightMapValues(
 	const TSharedPtr<FJsonObject>& Arguments,
 	const FClothLODDataCommon& LodData,
-	EWeightMapTargetCommon Target,
+	const FBridgeLegacyWeightMapTarget& Target,
 	TArray<float>& OutValues,
 	int32& OutSelectedVertexCount,
 	FString& OutError)
 {
 	const FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
 	OutSelectedVertexCount = 0;
-	BuildExistingLegacyWeightMapValues(LodData, Target, OutValues);
+	ReadBridgeLegacyWeightMapValues(LodData, Target, OutValues);
 
 	TArray<bool> SelectedVertices;
 	if (!BuildLegacyClothWeldSelection(Arguments, PhysicalMesh, SelectedVertices, OutError))
@@ -2177,27 +2095,6 @@ bool BuildSpatialWeightMapValues(
 	return true;
 }
 
-void ApplyLegacyWeightMapToLodData(FClothLODDataCommon& LodData, const TArray<float>& Values, EWeightMapTargetCommon Target)
-{
-	FPointWeightMap& PhysicalWeightMap = LodData.PhysicalMeshData.FindOrAddWeightMap(Target);
-	PhysicalWeightMap.Values = Values;
-	ConfigureWeightMapMetadata(PhysicalWeightMap, Target);
-
-#if WITH_EDITORONLY_DATA
-	for (int32 Index = LodData.PointWeightMaps.Num() - 1; Index >= 0; --Index)
-	{
-		if (LodData.PointWeightMaps[Index].CurrentTarget == static_cast<uint8>(Target))
-		{
-			LodData.PointWeightMaps.RemoveAt(Index);
-		}
-	}
-	FPointWeightMap* PointWeightMap = &LodData.PointWeightMaps.AddDefaulted_GetRef();
-	PointWeightMap->Values = Values;
-	ConfigureWeightMapMetadata(*PointWeightMap, Target);
-#endif
-	LodData.PushWeightsToMesh();
-}
-
 void RemapLegacyClothWeightMaps(
 	TMap<uint32, FPointWeightMap>& WeightMaps,
 	const TArray<TArray<int32>>& NewVertexToOldVertices)
@@ -2232,6 +2129,7 @@ void RemapLegacyClothPointWeightMaps(
 {
 	for (FPointWeightMap& WeightMap : PointWeightMaps)
 	{
+		const bool bSourceSectionMap = IsBridgeSourceSectionMap(WeightMap.Name);
 		const TArray<float> OldValues = WeightMap.Values;
 		TArray<float> NewValues;
 		NewValues.SetNum(NewVertexToOldVertices.Num());
@@ -2245,7 +2143,9 @@ void RemapLegacyClothPointWeightMaps(
 				{
 					continue;
 				}
-				Value = bHasValue ? FMath::Min(Value, OldValues[OldIndex]) : OldValues[OldIndex];
+				Value = bHasValue
+					? (bSourceSectionMap ? FMath::Max(Value, OldValues[OldIndex]) : FMath::Min(Value, OldValues[OldIndex]))
+					: OldValues[OldIndex];
 				bHasValue = true;
 			}
 			NewValues[NewIndex] = Value;
@@ -2772,6 +2672,12 @@ FBridgeToolResult UClothQueryTool::Execute(const TSharedPtr<FJsonObject>& Argume
 	if (!Mesh)
 	{
 		return FBridgeToolResult::Error(LoadError);
+	}
+	const bool bLodExplicitlyRequested = Arguments.IsValid() && Arguments->HasField(TEXT("lod_index"));
+	if (bLodExplicitlyRequested && Mesh->GetImportedModel()
+		&& !Mesh->GetImportedModel()->LODModels.IsValidIndex(LodIndex))
+	{
+		return FBridgeToolResult::Error(FString::Printf(TEXT("cloth: lod_index %d is out of range"), LodIndex));
 	}
 	return FBridgeToolResult::Json(BuildQueryResult(Mesh, SkeletalMeshPath, AssetName, LodIndex));
 }
@@ -3532,7 +3438,7 @@ FBridgeToolResult UClothBindTool::Execute(const TSharedPtr<FJsonObject>& Argumen
 	{
 		return FBridgeToolResult::Error(SaveError);
 	}
-	Result->SetArrayField(TEXT("bindings"), BuildBindingArray(Mesh));
+	Result->SetArrayField(TEXT("bindings"), BuildBindingArray(BridgeClothBindings::Collect(Mesh).Bindings));
 	return FBridgeToolResult::Json(Result);
 }
 
@@ -3637,7 +3543,7 @@ FBridgeToolResult UClothSetConfigTool::Execute(const TSharedPtr<FJsonObject>& Ar
 
 FString UClothApplyWeightMapTool::GetToolDescription() const
 {
-	return TEXT("Apply a legacy cloth weight map from a constant value, imported vertex color channel, root-bone distance falloff, or spatial selection.");
+	return TEXT("Apply a legacy cloth weight map from a constant value, imported vertex color channel, root-bone distance falloff, or spatial selection, optionally restricted to merged source sections.");
 }
 
 TMap<FString, FBridgeSchemaProperty> UClothApplyWeightMapTool::GetInputSchema() const
@@ -3646,7 +3552,8 @@ TMap<FString, FBridgeSchemaProperty> UClothApplyWeightMapTool::GetInputSchema() 
 	Schema.Add(TEXT("skeletal_mesh"), ClothSchemaProperty(TEXT("string"), TEXT("SkeletalMesh asset path"), true));
 	Schema.Add(TEXT("asset_name"), ClothSchemaProperty(TEXT("string"), TEXT("Existing clothing asset name"), true));
 	Schema.Add(TEXT("lod_index"), ClothSchemaProperty(TEXT("integer"), TEXT("Clothing asset LOD index")));
-	Schema.Add(TEXT("target"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map target"), false, { TEXT("max-distance"), TEXT("anim-drive-stiffness"), TEXT("anim-drive-damping"), TEXT("backstop-distance"), TEXT("backstop-radius") }));
+	Schema.Add(TEXT("target"), ClothSchemaProperty(TEXT("string"), TEXT("Runtime-supported Chaos weight map target"), false, GetBridgeLegacyWeightMapTargetNames()));
+	Schema.Add(TEXT("section_indices"), ClothSchemaProperty(TEXT("array"), TEXT("Merged source SkeletalMesh section indices whose vertices may be updated")));
 	Schema.Add(TEXT("rule"), ClothSchemaProperty(TEXT("string"), TEXT("Weight map generation rule"), true, { TEXT("constant"), TEXT("vertex-color"), TEXT("bone-distance"), TEXT("spatial") }));
 	Schema.Add(TEXT("value"), ClothSchemaProperty(TEXT("number"), TEXT("Constant value, or selected vertex value for spatial")));
 	Schema.Add(TEXT("channel"), ClothSchemaProperty(TEXT("string"), TEXT("Vertex-color channel"), false, { TEXT("red"), TEXT("green"), TEXT("blue"), TEXT("alpha") }));
@@ -3691,10 +3598,9 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	}
 
 	const FString Target = GetStringArgOrDefault(Arguments, TEXT("target"), TEXT("max-distance"));
-	EWeightMapTargetCommon WeightMapTarget = EWeightMapTargetCommon::MaxDistance;
-	FString CanonicalTarget;
+	FBridgeLegacyWeightMapTarget WeightMapTarget;
 	FString TargetError;
-	if (!ResolveLegacyWeightMapTarget(Target, WeightMapTarget, CanonicalTarget, TargetError))
+	if (!ResolveBridgeLegacyWeightMapTarget(Target, WeightMapTarget, TargetError))
 	{
 		return FBridgeToolResult::Error(TargetError);
 	}
@@ -3722,8 +3628,28 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 		return FBridgeToolResult::Error(TEXT("cloth: physical mesh has no vertices"));
 	}
 
+	TArray<int32> SectionIndices;
+	TArray<bool> SectionSelection;
+	int32 MultiSectionVertexCount = 0;
+	const bool bHasSectionSelection = Arguments.IsValid()
+		&& (Arguments->HasField(TEXT("section_indices")) || Arguments->HasField(TEXT("section_index")));
+	if (bHasSectionSelection)
+	{
+		FString SectionError;
+		if (!ParseSectionIndicesFromArgs(Arguments, SectionIndices, SectionError)
+			|| !ReadBridgeSourceSectionSelection(LodData, SectionIndices, SectionSelection, SectionError))
+		{
+			return FBridgeToolResult::Error(SectionError);
+		}
+	}
+
 	TArray<float> Values;
 	Values.SetNum(VertexCount);
+	TArray<float> ExistingValues;
+	if (bHasSectionSelection)
+	{
+		ReadBridgeLegacyWeightMapValues(LodData, WeightMapTarget, ExistingValues);
+	}
 	int32 SpatialSelectedVertexCount = 0;
 	if (Rule.Equals(TEXT("constant"), ESearchCase::IgnoreCase))
 	{
@@ -3799,8 +3725,42 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 		}
 	}
 
+	int32 SelectedVertexCount = bHasSectionSelection ? 0 : SpatialSelectedVertexCount;
+	TArray<bool> FinalSelection;
+	if (bHasSectionSelection)
+	{
+		TArray<bool> SpatialSelection;
+		if (Rule.Equals(TEXT("spatial"), ESearchCase::IgnoreCase))
+		{
+			FString SpatialSelectionError;
+			if (!BuildLegacyClothWeldSelection(Arguments, PhysicalMesh, SpatialSelection, SpatialSelectionError))
+			{
+				return FBridgeToolResult::Error(SpatialSelectionError);
+			}
+		}
+		FString SelectionError;
+		TArray<float> CommittedValues;
+		if (!ApplyBridgeLegacySectionSelection(
+			ExistingValues,
+			Values,
+			SectionSelection,
+			SpatialSelection,
+			CommittedValues,
+			FinalSelection,
+			SelectionError))
+		{
+			return FBridgeToolResult::Error(SelectionError);
+		}
+		Values = MoveTemp(CommittedValues);
+		for (bool bSelected : FinalSelection)
+		{
+			SelectedVertexCount += bSelected ? 1 : 0;
+		}
+		MultiSectionVertexCount = CountBridgeSelectedMultiSectionVertices(LodData, FinalSelection);
+	}
+
 	FClothLODDataCommon PreviewLodData = LodData;
-	ApplyLegacyWeightMapToLodData(PreviewLodData, Values, WeightMapTarget);
+	ApplyBridgeLegacyWeightMapToLodData(PreviewLodData, Values, WeightMapTarget);
 	TArray<FLegacyClothSectionMapping> GeneratedMappings;
 	FString MappingError;
 	if (CountLegacyClothBoundSections(Mesh, Asset, LodIndex) > 0
@@ -3827,14 +3787,25 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	RestorePhysicalOnlyLegacyClothWeightMaps(LodData.PhysicalMeshData, RemappedPhysicalWeightMaps);
 	Asset->InvalidateAllCachedData();
 
-	FPointWeightMap* PhysicalWeightMap = LodData.PhysicalMeshData.FindWeightMap(WeightMapTarget);
+	FPointWeightMap* PhysicalWeightMap = LodData.PhysicalMeshData.FindWeightMap(static_cast<EWeightMapTargetCommon>(WeightMapTarget.Id));
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMeshPath);
 	Result->SetStringField(TEXT("asset_name"), Asset->GetName());
 	Result->SetNumberField(TEXT("lod_index"), LodIndex);
-	Result->SetStringField(TEXT("target"), CanonicalTarget);
+	Result->SetStringField(TEXT("target"), WeightMapTarget.CliName);
 	Result->SetStringField(TEXT("rule"), Rule);
+	if (bHasSectionSelection)
+	{
+		TArray<TSharedPtr<FJsonValue>> SectionValues;
+		for (int32 SectionIndex : SectionIndices)
+		{
+			SectionValues.Add(MakeShared<FJsonValueNumber>(SectionIndex));
+		}
+		Result->SetArrayField(TEXT("section_indices"), SectionValues);
+		Result->SetNumberField(TEXT("selected_vertex_count"), SelectedVertexCount);
+		Result->SetNumberField(TEXT("multi_section_vertex_count"), MultiSectionVertexCount);
+	}
 	if (Rule.Equals(TEXT("bone-distance"), ESearchCase::IgnoreCase))
 	{
 		Result->SetStringField(TEXT("root_bone"), GetStringArgOrDefault(Arguments, TEXT("root_bone")));
@@ -3845,7 +3816,7 @@ FBridgeToolResult UClothApplyWeightMapTool::Execute(const TSharedPtr<FJsonObject
 	}
 	else if (Rule.Equals(TEXT("spatial"), ESearchCase::IgnoreCase))
 	{
-		Result->SetNumberField(TEXT("selected_vertex_count"), SpatialSelectedVertexCount);
+		Result->SetNumberField(TEXT("selected_vertex_count"), bHasSectionSelection ? SelectedVertexCount : SpatialSelectedVertexCount);
 		if (Arguments.IsValid())
 		{
 			double Value = 0.0;
@@ -4101,6 +4072,7 @@ void FClothWeightMapFalloffSpec::Define()
 
 		It("builds spatial ramp values while preserving unselected vertices", [this]()
 		{
+			const FBridgeLegacyWeightMapTarget MaxDistanceTarget = MakeTestLegacyWeightMapTarget(EWeightMapTargetCommon::MaxDistance, TEXT("max-distance"), TEXT("MaxDistance"));
 			FClothLODDataCommon LodData;
 			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
 			PhysicalMesh.Vertices = {
@@ -4120,7 +4092,7 @@ void FClothWeightMapFalloffSpec::Define()
 			TArray<float> Values;
 			int32 SelectedVertexCount = 0;
 			FString Error;
-			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::MaxDistance, Values, SelectedVertexCount, Error);
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, MaxDistanceTarget, Values, SelectedVertexCount, Error);
 
 			TestTrue(TEXT("spatial values built"), bBuilt);
 			TestEqual(TEXT("value count"), Values.Num(), 3);
@@ -4132,6 +4104,7 @@ void FClothWeightMapFalloffSpec::Define()
 
 		It("preserves existing values for the selected legacy target", [this]()
 		{
+			const FBridgeLegacyWeightMapTarget AnimDriveTarget = MakeTestLegacyWeightMapTarget(EWeightMapTargetCommon::AnimDriveStiffness, TEXT("anim-drive-stiffness"), TEXT("AnimDriveStiffness"));
 			FClothLODDataCommon LodData;
 			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
 			PhysicalMesh.Vertices = {
@@ -4151,7 +4124,7 @@ void FClothWeightMapFalloffSpec::Define()
 			TArray<float> Values;
 			int32 SelectedVertexCount = 0;
 			FString Error;
-			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::AnimDriveStiffness, Values, SelectedVertexCount, Error);
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, AnimDriveTarget, Values, SelectedVertexCount, Error);
 
 			TestTrue(TEXT("spatial values built"), bBuilt);
 			TestEqual(TEXT("value count"), Values.Num(), 2);
@@ -4162,6 +4135,7 @@ void FClothWeightMapFalloffSpec::Define()
 
 		It("uses the effective duplicate mask values for spatial preservation", [this]()
 		{
+			const FBridgeLegacyWeightMapTarget AnimDriveTarget = MakeTestLegacyWeightMapTarget(EWeightMapTargetCommon::AnimDriveStiffness, TEXT("anim-drive-stiffness"), TEXT("AnimDriveStiffness"));
 			FClothLODDataCommon LodData;
 			FClothPhysicalMeshData& PhysicalMesh = LodData.PhysicalMeshData;
 			PhysicalMesh.Vertices = {
@@ -4171,10 +4145,10 @@ void FClothWeightMapFalloffSpec::Define()
 
 			FPointWeightMap& FirstAnimDrive = LodData.PointWeightMaps.AddDefaulted_GetRef();
 			FirstAnimDrive.Values = { 0.25f, 0.5f };
-			ConfigureWeightMapMetadata(FirstAnimDrive, EWeightMapTargetCommon::AnimDriveStiffness);
+			ConfigureBridgeLegacyWeightMapMetadata(FirstAnimDrive, AnimDriveTarget);
 			FPointWeightMap& SecondAnimDrive = LodData.PointWeightMaps.AddDefaulted_GetRef();
 			SecondAnimDrive.Values = { 0.75f, 0.9f };
-			ConfigureWeightMapMetadata(SecondAnimDrive, EWeightMapTargetCommon::AnimDriveStiffness);
+			ConfigureBridgeLegacyWeightMapMetadata(SecondAnimDrive, AnimDriveTarget);
 
 			TSharedPtr<FJsonObject> Args = MakeShared<FJsonObject>();
 			Args->SetNumberField(TEXT("z_min"), 50.0);
@@ -4184,12 +4158,12 @@ void FClothWeightMapFalloffSpec::Define()
 			TArray<float> Values;
 			int32 SelectedVertexCount = 0;
 			FString Error;
-			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, EWeightMapTargetCommon::AnimDriveStiffness, Values, SelectedVertexCount, Error);
+			const bool bBuilt = BuildSpatialWeightMapValues(Args, LodData, AnimDriveTarget, Values, SelectedVertexCount, Error);
 
 			TestTrue(TEXT("spatial values built"), bBuilt);
 			TestEqual(TEXT("unselected effective duplicate value preserved"), Values[0], 0.75f);
 
-			ApplyLegacyWeightMapToLodData(LodData, Values, EWeightMapTargetCommon::AnimDriveStiffness);
+			ApplyBridgeLegacyWeightMapToLodData(LodData, Values, AnimDriveTarget);
 
 			int32 MatchingMaskCount = 0;
 			for (const FPointWeightMap& PointWeightMap : LodData.PointWeightMaps)
@@ -4207,6 +4181,25 @@ void FClothWeightMapFalloffSpec::Define()
 				TestEqual(TEXT("physical unselected value"), PhysicalAnimDrive->Values[0], 0.75f);
 				TestEqual(TEXT("physical selected value"), PhysicalAnimDrive->Values[1], 1.0f);
 			}
+		});
+
+		It("remaps source-section provenance with union semantics", [this]()
+		{
+			TArray<FPointWeightMap> PointWeightMaps;
+			FPointWeightMap& Provenance = PointWeightMaps.AddDefaulted_GetRef();
+			Provenance.Name = FName(TEXT("SoftUESourceSection_2"));
+			Provenance.CurrentTarget = static_cast<uint8>(EWeightMapTargetCommon::None);
+			Provenance.bEnabled = false;
+			Provenance.Values = { 0.0f, 1.0f, 0.0f };
+
+			TArray<TArray<int32>> NewVertexToOldVertices;
+			NewVertexToOldVertices.Add(TArray<int32>{ 0, 1 });
+			NewVertexToOldVertices.Add(TArray<int32>{ 2 });
+			RemapLegacyClothPointWeightMaps(PointWeightMaps, NewVertexToOldVertices);
+
+			TestEqual(TEXT("welded membership uses logical OR"), PointWeightMaps[0].Values[0], 1.0f);
+			TestEqual(TEXT("unrelated membership remains false"), PointWeightMaps[0].Values[1], 0.0f);
+			TestFalse(TEXT("provenance remains disabled"), PointWeightMaps[0].bEnabled);
 		});
 	});
 }

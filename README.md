@@ -65,6 +65,26 @@ Recent releases moved soft-ue-cli from a flat list of one-off bridge calls towar
 - Optional plugin workflows are expected to compile cleanly without those plugins installed, then fail at runtime with actionable `plugin_unavailable` diagnostics.
 - CLI/Python/bridge probing is treated as the exploration layer; durable gameplay regressions should move into project-native C++ Automation Specs.
 
+## Release highlights: 1.45.0
+
+- Legacy `cloth apply-weightmap` accepts every weight-map target exposed by the active Chaos clothing runtime, including tether, drag/lift, stiffness, pressure, and flatness targets. For a merged cloth asset, repeat `--section-index` or pass comma-separated indices to update only those source sections; weights outside the selection are preserved.
+
+  ```bash
+  soft-ue-cli cloth apply-weightmap /Game/Characters/SK_Cape --asset-name CapeCloth \
+    --target edge-stiffness --rule constant --value 0.75 \
+    --section-index 1,3 --section-index 5 --save
+  ```
+
+- AnimGraph property-path failures from `blueprint node property` and `blueprint node add` now identify the node class, searched inner struct, unresolved field, available fields, and settable pins. Invalid array indices are rejected with a focused error.
+- `cloth query` keeps its existing response fields and adds `binding_warnings` plus `binding_warning_count` when imported section clothing metadata is malformed or unsupported.
+- `find-references node` rejects results that may be incomplete while Find in Blueprints is still indexing or has failed cache entries and no complete fallback traversal is possible. Intentional `--limit` truncation remains valid.
+- Multi-client PIE state is discoverable through `pie-session get-state`, which adds `worlds` and `world_count` while keeping the first world's legacy top-level fields. Target one PIE client and one of its local players explicitly when executing a console command:
+
+  ```bash
+  soft-ue-cli pie-session get-state
+  soft-ue-cli exec-console-command --pie-instance 1 --player-index 0 stat net
+  ```
+
 ## UE 5.8 MCP Positioning
 
 UE 5.8 official MCP is preferred when it covers native execution for the workflow you need.
@@ -310,7 +330,7 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | `blueprint node add` | Add a node to a Blueprint or Material graph (supports `AnimLayerFunction` for ALIs) |
 | `blueprint node remove` | Remove a node from a graph |
 | `blueprint node position` | Batch-set node positions for graph layout |
-| `blueprint node property` | Set properties on a graph node by GUID (UPROPERTY, inner structs, pin defaults) |
+| `blueprint node property` | Set properties on a graph node by GUID (UPROPERTY, inner structs, pin defaults), with detailed AnimGraph path diagnostics |
 | `blueprint pin connect` | Connect two pins between graph nodes |
 | `blueprint pin disconnect` | Disconnect pin connections (all or specific with `--target-node`/`--target-pin`) |
 | `blueprint interface modify` | Add or remove an implemented interface on a Blueprint or AnimBlueprint |
@@ -371,11 +391,11 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | Command | Description |
 |---------|-------------|
 | `cloth` | Canonical Chaos Cloth setup, inspection, binding, config, weight-map, collision, conversion, and seam-stitching command family |
-| `cloth query` | Inspect SkeletalMesh cloth assets, section bindings, LOD maps, configs, physical mesh stats, and section cloth state |
+| `cloth query` | Inspect SkeletalMesh cloth assets, section bindings, LOD maps, configs, physical mesh stats, section cloth state, and additive binding warnings |
 | `cloth create` | Create a legacy in-mesh clothing asset from one or more SkeletalMesh material sections, optionally welding coincident boundary vertices |
 | `cloth bind` | Bind an existing clothing asset to a SkeletalMesh section and repair stale LOD/section metadata |
 | `cloth set-config` | Patch properties on a legacy clothing config object from JSON |
-| `cloth apply-weightmap` | Author legacy cloth weight maps from constants, gradients, texture channels, bone-distance falloff, or physical-mesh spatial selection |
+| `cloth apply-weightmap` | Author all runtime-supported legacy cloth weight-map targets, with optional repeatable/comma-separated source-section selection |
 | `cloth weld` | Weld coincident vertices in a legacy in-mesh clothing asset's physical mesh and rebuild render-to-cloth mappings |
 | `cloth extract-collision` | Extract cloth collision primitives from a PhysicsAsset into a clothing asset |
 | `cloth chaos-query` | Inspect a Dataflow-based Chaos Cloth Asset's LOD collections, seams, sim/render mesh counts, weight maps, gap candidates, and per-vertex weights |
@@ -395,8 +415,8 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 
 | Command | Description |
 |---------|-------------|
-| `exec-console-command` | Execute arbitrary UE console commands directly in editor, PIE, or game worlds |
-| `pie-session` | Start, stop, pause, resume PIE -- also query actor state during play |
+| `exec-console-command` | Execute arbitrary UE console commands in editor, PIE, or game worlds, with optional PIE-instance and local-player targeting |
+| `pie-session` | Start, stop, pause, resume PIE -- also query actor state and enumerate active PIE worlds during play |
 | `pie-tick` | Start PIE if needed and advance the world deterministically by frame count |
 | `anim` | Canonical animation instance, sync marker, graph authoring, montage, retarget migration, PoseSearch, transition, and Rewind command family |
 | `anim instance inspect` | Snapshot a target actor's live `UAnimInstance` state or inspect static AnimBlueprint topology with `--asset-path` |
@@ -660,7 +680,7 @@ soft-ue-cli anim instance inspect --actor-tag TestCharacter --include state_mach
 
 ```bash
 soft-ue-cli exec-console-command stat fps
-soft-ue-cli exec-console-command --player-index 0 MyGame.MyCommand arg1 arg2
+soft-ue-cli exec-console-command --pie-instance 1 --player-index 0 MyGame.MyCommand arg1 arg2
 ```
 
 ### Inspect possession state during PIE

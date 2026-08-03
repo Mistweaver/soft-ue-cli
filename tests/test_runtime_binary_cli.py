@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+
 from soft_ue_cli import __main__ as main_mod
 from soft_ue_cli.__main__ import (
     build_parser,
@@ -14,6 +15,7 @@ from soft_ue_cli.__main__ import (
     cmd_runtime_readiness,
     cmd_runtime_smoke_plan,
 )
+
 
 def test_runtime_readiness_cli_outputs_json(capsys, monkeypatch, tmp_path: Path) -> None:
     args = build_parser().parse_args(["runtime", "readiness", "--project", str(tmp_path), "--configuration", "Development"])
@@ -33,6 +35,7 @@ def test_runtime_readiness_cli_outputs_json(capsys, monkeypatch, tmp_path: Path)
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "soft-ue.runtime.packaged-readiness.v1"
     assert payload["configuration"] == "Development"
+
 
 def test_binary_plan_commands_parse_and_dispatch(capsys, monkeypatch, tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
@@ -81,6 +84,7 @@ def test_binary_plan_commands_parse_and_dispatch(capsys, monkeypatch, tmp_path: 
     rollback_args = build_parser().parse_args(["runtime", "binary", "plan-rollback", "--project", str(tmp_path)])
     cmd_binary_rollback_plan(rollback_args)
     assert json.loads(capsys.readouterr().out)["schema"] == "soft-ue.binary.rollback-plan.v1"
+
 
 def test_runtime_smoke_plan_cli_outputs_plan(capsys, monkeypatch, tmp_path: Path) -> None:
     exe = tmp_path / "Game.exe"

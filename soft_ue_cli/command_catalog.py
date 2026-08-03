@@ -79,6 +79,30 @@ def _entry(
 
 
 _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
+    "find-references": _entry(
+        "find-references",
+        "Find asset, property, or Blueprint node references and reject incomplete node results.",
+        layer="bridge",
+        category="inspect",
+        requires_bridge=True,
+        requires_editor=True,
+        examples=[
+            "soft-ue-cli find-references node /Game --node-class K2Node_CallFunction --limit 25",
+        ],
+    ),
+    "exec-console-command": _entry(
+        "exec-console-command",
+        "Execute a console command in an editor, game, or selected PIE world.",
+        layer="bridge",
+        category="runtime",
+        requires_bridge=True,
+        requires_editor=True,
+        requires_pie=False,
+        examples=[
+            "soft-ue-cli exec-console-command --pie-instance 1 stat net",
+            "soft-ue-cli exec-console-command --pie-instance 1 --player-index 0 MyGame.MyCommand",
+        ],
+    ),
     "commands": _entry(
         "commands",
         "List CLI command taxonomy and availability metadata.",
@@ -346,6 +370,7 @@ _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
             "soft-ue-cli cloth apply-weightmap /Game/Characters/SK_Cape --asset-name CapeCloth --target anim-drive-stiffness --rule constant --value 0.75 --save",
             "soft-ue-cli cloth apply-weightmap /Game/Characters/SK_Cape --asset-name CapeCloth --rule bone-distance --root-bone spine_03 --min-distance 0 --max-distance 80 --curve smooth --save",
             "soft-ue-cli cloth apply-weightmap /Game/Characters/SK_Cape --asset-name CapeCloth --rule spatial --z-min 120 --z-max 180 --min-value 0 --max-value 20 --curve smooth --save",
+            "soft-ue-cli cloth apply-weightmap /Game/Characters/SK_Cape --asset-name CapeCloth --target edge-stiffness --rule constant --value 0.75 --section-index 1,3 --section-index 5 --save",
         ],
     ),
     "cloth weld": _entry(

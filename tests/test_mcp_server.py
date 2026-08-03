@@ -6,7 +6,9 @@ import json
 import sys
 from unittest.mock import patch
 
+import httpx
 import pytest
+
 
 # Skip all tests if mcp is not installed
 mcp = pytest.importorskip("mcp")
@@ -16,10 +18,12 @@ from soft_ue_cli.errors import BridgeError, ErrorKind
 from soft_ue_cli.mcp_schema import extract_tools
 from soft_ue_cli.mcp_server import create_server, _make_client_tool_fn
 
+
 def test_create_server_returns_fastmcp():
     from mcp.server.fastmcp import FastMCP
     server = create_server()
     assert isinstance(server, FastMCP)
+
 
 def test_server_has_tools():
     # NOTE: _tool_manager/_tools are private FastMCP internals.
@@ -28,10 +32,12 @@ def test_server_has_tools():
     assert server._tool_manager is not None
     assert len(server._tool_manager._tools) >= 60
 
+
 def test_server_has_prompts():
     server = create_server()
     assert server._prompt_manager is not None
     assert len(server._prompt_manager._prompts) > 0
+
 
 def test_anim_state_machine_tools_have_native_mcp_types():
     tools = {tool["name"]: tool for tool in extract_tools()}
@@ -39,6 +45,7 @@ def test_anim_state_machine_tools_have_native_mcp_types():
     assert tools["anim state-machine add"]["parameters"]["properties"]["position"]["type"] == "array"
     assert tools["anim state add"]["parameters"]["properties"]["position"]["type"] == "array"
     assert tools["anim transition add"]["parameters"]["properties"]["rule"]["type"] == "boolean"
+
 
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_mcp_cloth_chaos_set_weightmap_forwards_native_arrays(mock_call_tool):
@@ -68,6 +75,7 @@ def test_mcp_cloth_chaos_set_weightmap_forwards_native_arrays(mock_call_tool):
     assert call_args.args[1]["radius"] == 25.0
     assert json.loads(result) == {"success": True}
 
+
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_mcp_cloth_weld_forwards_native_center_array(mock_call_tool):
     mock_call_tool.return_value = ({"success": True}, BridgeCallMeta())
@@ -94,6 +102,7 @@ def test_mcp_cloth_weld_forwards_native_center_array(mock_call_tool):
     assert call_args.args[1]["center"] == [0.0, 0.0, 120.0]
     assert call_args.args[1]["radius"] == 30.0
     assert json.loads(result) == {"success": True}
+
 
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_mcp_cloth_apply_weightmap_forwards_native_spatial_center_array(mock_call_tool):
@@ -126,6 +135,32 @@ def test_mcp_cloth_apply_weightmap_forwards_native_spatial_center_array(mock_cal
     assert call_args.args[1]["max_value"] == 20.0
     assert json.loads(result) == {"success": True}
 
+
+@patch("soft_ue_cli.__main__.call_tool_ex")
+def test_mcp_cloth_apply_weightmap_forwards_native_section_indices(mock_call_tool):
+    mock_call_tool.return_value = ({"success": True}, BridgeCallMeta())
+    server = create_server()
+
+    tool_fn = next(
+        tool.fn
+        for tool in server._tool_manager._tools.values()
+        if tool.name == "cloth apply-weightmap"
+    )
+    result = tool_fn(
+        skeletal_mesh="/Game/Characters/SK_Cape",
+        asset_name="CapeCloth",
+        target="edge-stiffness",
+        rule="constant",
+        value=0.75,
+        section_indices=[1, 3, 5],
+    )
+
+    call_args = mock_call_tool.call_args
+    assert call_args.args[0] == "cloth-apply-weightmap"
+    assert call_args.args[1]["section_indices"] == [1, 3, 5]
+    assert json.loads(result) == {"success": True}
+
+
 @patch("soft_ue_cli.client.call_tool_ex")
 def test_tool_call_forwards_to_bridge(mock_call_tool):
     mock_call_tool.return_value = ({"actors": []}, BridgeCallMeta())
@@ -143,6 +178,7 @@ def test_tool_call_forwards_to_bridge(mock_call_tool):
     call_args = mock_call_tool.call_args
     assert call_args[0][0] == "query-level"
     assert "limit" in call_args[0][1]
+
 
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_tool_call_maps_no_auto_position(mock_call_tool):
@@ -167,6 +203,7 @@ def test_tool_call_maps_no_auto_position(mock_call_tool):
     parsed = json.loads(result)
     assert parsed == {"status": "ok"}
 
+
 @patch("soft_ue_cli.client.call_tool_ex")
 def test_tool_call_forwards_pie_timeout_to_http_timeout(mock_call_tool):
     mock_call_tool.return_value = ({"status": "ok"}, BridgeCallMeta())
@@ -186,6 +223,7 @@ def test_tool_call_forwards_pie_timeout_to_http_timeout(mock_call_tool):
     arguments = mock_call_tool.call_args.args[1]
     assert arguments["action"] == "start"
     assert arguments["timeout"] == 42.5
+
 
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_tool_call_normalizes_add_graph_node_created_nodes(mock_call_tool):
@@ -211,6 +249,7 @@ def test_tool_call_normalizes_add_graph_node_created_nodes(mock_call_tool):
     result = tool_fn(asset_path="/Game/ALI", node_class="AnimLayerFunction", graph_name="ALIGraph")
     parsed = json.loads(result)
     assert parsed["node_guid"] == "11111111-1111-1111-1111-111111111111"
+
 
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_mcp_add_co_parameter_uses_cli_transform(mock_call_tool):
@@ -238,6 +277,7 @@ def test_mcp_add_co_parameter_uses_cli_transform(mock_call_tool):
         "properties": {"ParameterName": "BodyHeight"},
     }
     assert json.loads(result) == {"success": True}
+
 
 @patch("soft_ue_cli.client.call_tool")
 @patch("soft_ue_cli.client.call_tool_ex")
@@ -269,6 +309,37 @@ def test_tool_call_stops_pie_on_start_timeout(mock_call_tool_ex, mock_call_tool)
     assert mock_call_tool.call_args.args[0] == "pie-session"
     assert mock_call_tool.call_args.args[1]["action"] == "stop"
 
+
+def test_find_references_raw_incomplete_result_returns_expected_mcp_error(monkeypatch):
+    message = (
+        "find-references node: incomplete_fib_index: cache_in_progress=true, "
+        "discovery_in_progress=false, unindexed_count=2, failed_to_cache_count=0, candidate_count=1, "
+        "blueprints_searched=0. Finish Find in Blueprints indexing and retry."
+    )
+    raw_payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "result": {"isError": True, "content": [{"type": "text", "text": message}]},
+    }
+    request = httpx.Request("POST", "http://127.0.0.1:8080/bridge")
+    monkeypatch.setattr(
+        "soft_ue_cli.client.httpx.post",
+        lambda *_args, **_kwargs: httpx.Response(200, json=raw_payload, request=request),
+    )
+    monkeypatch.setattr("soft_ue_cli.client.get_server_url", lambda: "http://127.0.0.1:8080")
+    server = create_server()
+    tool_fn = next(
+        tool.fn for tool in server._tool_manager._tools.values() if tool.name == "find-references"
+    )
+
+    payload = json.loads(
+        tool_fn(type="node", asset_path="/Game", node_class="K2Node_CallFunction")
+    )
+
+    assert payload == {"error": f"Tool 'find-references' failed: {message}"}
+    assert "bug_report_hint" not in payload
+
+
 @patch("soft_ue_cli.client.call_tool_ex")
 def test_tool_call_returns_json_string(mock_call_tool):
     mock_call_tool.return_value = ({"status": "ok"}, BridgeCallMeta())
@@ -286,6 +357,7 @@ def test_tool_call_returns_json_string(mock_call_tool):
     parsed = json.loads(result)
     assert parsed == {"status": "ok"}
 
+
 def test_client_tool_fn_handles_system_exit():
     def exiting_cmd(_args):
         raise SystemExit(1)
@@ -295,6 +367,7 @@ def test_client_tool_fn_handles_system_exit():
     parsed = json.loads(result)
     assert parsed == {"error": "Command 'failing-tool' exited with code 1"}
 
+
 def test_client_tool_fn_handles_exception():
     def failing_cmd(_args):
         raise RuntimeError("boom")
@@ -303,6 +376,7 @@ def test_client_tool_fn_handles_exception():
     result = tool_fn()
     parsed = json.loads(result)
     assert parsed == {"error": "Command 'failing-tool' failed: boom"}
+
 
 def test_client_tool_fn_preserves_stderr_reason_on_failure():
     def boom(_namespace):
@@ -314,12 +388,14 @@ def test_client_tool_fn_preserves_stderr_reason_on_failure():
 
     assert "asset not found" in payload
 
+
 def test_prompt_list_has_blueprint_to_cpp():
     server = create_server()
     prompts = server._prompt_manager._prompts
     prompt_names = {p for p in prompts}
     assert "blueprint-to-cpp" in prompt_names
     assert "author-test" in prompt_names
+
 
 def test_prompt_fn_returns_content():
     server = create_server()
@@ -328,6 +404,7 @@ def test_prompt_fn_returns_content():
     result = prompt.fn()
     assert isinstance(result, str)
     assert "Blueprint to C++" in result
+
 
 def test_mcp_tool_result_carries_session_notices(monkeypatch):
     from soft_ue_cli import client as client_mod
@@ -346,6 +423,7 @@ def test_mcp_tool_result_carries_session_notices(monkeypatch):
     assert payload["actors"] == []
     assert payload["session_notices"][0]["from_label"] == "builder"
 
+
 def test_mcp_tool_result_omits_session_notices_when_empty(monkeypatch):
     from soft_ue_cli import client as client_mod
     from soft_ue_cli import mcp_server
@@ -359,6 +437,7 @@ def test_mcp_tool_result_omits_session_notices_when_empty(monkeypatch):
     payload = json.loads(fn())
 
     assert "session_notices" not in payload
+
 
 def test_mcp_tool_error_response_carries_session_notices(monkeypatch):
     from soft_ue_cli import client as client_mod
@@ -379,6 +458,7 @@ def test_mcp_tool_error_response_carries_session_notices(monkeypatch):
     payload = json.loads(fn())
 
     assert payload["session_notices"][0]["from_label"] == "builder"
+
 
 def test_mcp_tool_call_does_not_inherit_a_pooled_threads_label(monkeypatch):
     """`session_as` is a model-reachable tool parameter on a long-lived process.
@@ -407,6 +487,7 @@ def test_mcp_tool_call_does_not_inherit_a_pooled_threads_label(monkeypatch):
 
     assert seen["id"].startswith("unknown:")
 
+
 def test_mcp_client_tool_fn_does_not_inherit_a_pooled_threads_label(monkeypatch):
     """Same reset on the client-side path, which is where `session_as` arrives."""
     from soft_ue_cli import client as client_mod
@@ -430,6 +511,7 @@ def test_mcp_client_tool_fn_does_not_inherit_a_pooled_threads_label(monkeypatch)
 
     assert seen["id"].startswith("unknown:")
 
+
 def test_create_server_sets_a_process_wide_default_label(monkeypatch):
     """The startup m-<uuid8> is a legitimate process-wide identity, not per-call state."""
     from soft_ue_cli import client as client_mod
@@ -442,6 +524,7 @@ def test_create_server_sets_a_process_wide_default_label(monkeypatch):
 
     assert client_mod._DEFAULT_SESSION_LABEL.startswith("m-")
     assert client_mod.session_descriptor()["id"] == client_mod._DEFAULT_SESSION_LABEL
+
 
 def _patch_both_bridge_entrypoints(monkeypatch, seen: dict):
     """Intercept every bridge call an MCP tool can make, recording who it claims to be.
@@ -462,6 +545,7 @@ def _patch_both_bridge_entrypoints(monkeypatch, seen: dict):
 
     monkeypatch.setattr(main_mod, "call_tool_ex", recorder("session"))
     monkeypatch.setattr(client_mod, "call_tool_ex", recorder("bridge"))
+
 
 def test_announced_mcp_agent_keeps_one_roster_row(monkeypatch):
     """An MCP agent has no shell, so `session_as` on `announce` is the only place
@@ -489,6 +573,7 @@ def test_announced_mcp_agent_keeps_one_roster_row(monkeypatch):
 
     assert seen["session"] == "cape-cloth"
     assert seen["bridge"] == "cape-cloth"
+
 
 def test_per_call_as_outside_announce_does_not_become_the_default(monkeypatch):
     """`--as` on `list`/`ask`/`inbox`/... means "act as", for that call only.
@@ -518,6 +603,7 @@ def test_per_call_as_outside_announce_does_not_become_the_default(monkeypatch):
     assert client_mod._DEFAULT_SESSION_LABEL == startup_label
     assert seen["bridge"] == startup_label
 
+
 def test_announce_does_not_promote_the_env_derived_default(monkeypatch):
     """FastMCP passes every parameter, filling omitted ones from the schema default.
 
@@ -545,6 +631,7 @@ def test_announce_does_not_promote_the_env_derived_default(monkeypatch):
 
     assert client_mod._DEFAULT_SESSION_LABEL == "m-fixed"
 
+
 def test_client_tool_fn_injects_session_notices_from_run_tool(monkeypatch):
     """A space-named tool (routed through _make_client_tool_fn) whose cmd_fn calls
     the real _run_tool must surface notices in the returned body, even though
@@ -566,6 +653,7 @@ def test_client_tool_fn_injects_session_notices_from_run_tool(monkeypatch):
     assert payload["success"] is True
     assert payload["session_notices"][0]["from_label"] == "builder"
 
+
 def test_client_tool_fn_omits_session_notices_when_run_tool_has_none(monkeypatch):
     from soft_ue_cli import __main__ as main_mod
     from soft_ue_cli.client import BridgeCallMeta
@@ -581,6 +669,7 @@ def test_client_tool_fn_omits_session_notices_when_run_tool_has_none(monkeypatch
 
     assert payload == {"success": True}
     assert "session_notices" not in payload
+
 
 def test_client_tool_fn_leaves_non_json_output_untouched_with_notices():
     from soft_ue_cli import client as client_mod

@@ -1,6 +1,7 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/Write/SetNodePropertyTool.h"
+#include "Utils/BridgeAnimNodeProperties.h"
 #include "Utils/BridgeAssetModifier.h"
 #include "Utils/BridgeJsonObjectUtils.h"
 #include "Utils/BridgePropertySerializer.h"
@@ -46,203 +47,6 @@ namespace
 		return false;
 	}
 
-	static bool ParsePathSegment(const FString& Segment, FString& OutName, int32& OutIndex)
-	{
-		OutIndex = INDEX_NONE;
-
-		int32 BracketStart = INDEX_NONE;
-		if (!Segment.FindChar(TEXT('['), BracketStart))
-		{
-			OutName = Segment;
-			return !OutName.IsEmpty();
-		}
-
-		int32 BracketEnd = INDEX_NONE;
-		if (!Segment.FindChar(TEXT(']'), BracketEnd) || BracketEnd <= BracketStart + 1)
-		{
-			return false;
-		}
-
-		OutName = Segment.Left(BracketStart);
-		const FString IndexString = Segment.Mid(BracketStart + 1, BracketEnd - BracketStart - 1);
-		if (OutName.IsEmpty() || !FCString::IsNumeric(*IndexString))
-		{
-			return false;
-		}
-
-		OutIndex = FCString::Atoi(*IndexString);
-		return OutIndex >= 0;
-	}
-
-	static bool ResolvePropertyPathAgainstStruct(
-		UStruct* RootStruct,
-		void* RootContainer,
-		const FString& PropertyPath,
-		FProperty*& OutProperty,
-		void*& OutContainer,
-		FString& OutError)
-	{
-		if (!RootStruct || !RootContainer)
-		{
-			OutError = TEXT("Struct root is null");
-			return false;
-		}
-		if (PropertyPath.IsEmpty())
-		{
-			OutError = TEXT("Property path is empty");
-			return false;
-		}
-
-		TArray<FString> Segments;
-		PropertyPath.ParseIntoArray(Segments, TEXT("."));
-		if (Segments.Num() == 0)
-		{
-			OutError = TEXT("Invalid property path");
-			return false;
-		}
-
-		UStruct* CurrentStruct = RootStruct;
-		void* CurrentContainer = RootContainer;
-		FProperty* CurrentProperty = nullptr;
-
-		for (int32 Index = 0; Index < Segments.Num(); ++Index)
-		{
-			const FString& Segment = Segments[Index];
-			FString PropertyName;
-			int32 ArrayIndex = INDEX_NONE;
-			if (!ParsePathSegment(Segment, PropertyName, ArrayIndex))
-			{
-				OutError = FString::Printf(TEXT("Invalid array index in segment: %s"), *Segment);
-				return false;
-			}
-
-			CurrentProperty = CurrentStruct ? CurrentStruct->FindPropertyByName(*PropertyName) : nullptr;
-			if (!CurrentProperty)
-			{
-				OutError = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
-				return false;
-			}
-
-			if (ArrayIndex >= 0)
-			{
-				FArrayProperty* ArrayProp = CastField<FArrayProperty>(CurrentProperty);
-				if (!ArrayProp)
-				{
-					OutError = FString::Printf(TEXT("Property '%s' is not an array"), *PropertyName);
-					return false;
-				}
-
-				FScriptArrayHelper ArrayHelper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(CurrentContainer));
-				if (ArrayIndex >= ArrayHelper.Num())
-				{
-					OutError = FString::Printf(TEXT("Array index %d out of bounds (size: %d)"), ArrayIndex, ArrayHelper.Num());
-					return false;
-				}
-
-				CurrentProperty = ArrayProp->Inner;
-				CurrentContainer = ArrayHelper.GetRawPtr(ArrayIndex);
-				if (Index == Segments.Num() - 1)
-				{
-					break;
-				}
-
-				FStructProperty* InnerStructProp = CastField<FStructProperty>(ArrayProp->Inner);
-				if (!InnerStructProp)
-				{
-					OutError = FString::Printf(TEXT("Cannot traverse into non-struct array element at: %s"), *Segment);
-					return false;
-				}
-
-				CurrentStruct = InnerStructProp->Struct;
-				if (CurrentStruct == FInstancedStruct::StaticStruct())
-				{
-					FInstancedStruct* InstancedStruct = static_cast<FInstancedStruct*>(CurrentContainer);
-					if (!InstancedStruct || !InstancedStruct->IsValid())
-					{
-						OutError = FString::Printf(TEXT("InstancedStruct array element '%s' is empty"), *Segment);
-						return false;
-					}
-
-					CurrentContainer = InstancedStruct->GetMutableMemory();
-					CurrentStruct = const_cast<UScriptStruct*>(InstancedStruct->GetScriptStruct());
-				}
-				continue;
-			}
-
-			if (Index == Segments.Num() - 1)
-			{
-				break;
-			}
-
-			if (FStructProperty* StructProp = CastField<FStructProperty>(CurrentProperty))
-			{
-				CurrentContainer = StructProp->ContainerPtrToValuePtr<void>(CurrentContainer);
-				CurrentStruct = StructProp->Struct;
-				if (CurrentStruct == FInstancedStruct::StaticStruct())
-				{
-					FInstancedStruct* InstancedStruct = static_cast<FInstancedStruct*>(CurrentContainer);
-					if (!InstancedStruct || !InstancedStruct->IsValid())
-					{
-						OutError = FString::Printf(TEXT("InstancedStruct property '%s' is empty"), *PropertyName);
-						return false;
-					}
-
-					CurrentContainer = InstancedStruct->GetMutableMemory();
-					CurrentStruct = const_cast<UScriptStruct*>(InstancedStruct->GetScriptStruct());
-				}
-			}
-			else if (FObjectProperty* ObjectProp = CastField<FObjectProperty>(CurrentProperty))
-			{
-				UObject* ObjectValue = ObjectProp->GetObjectPropertyValue_InContainer(CurrentContainer);
-				if (!ObjectValue)
-				{
-					OutError = FString::Printf(TEXT("Object property '%s' is null"), *PropertyName);
-					return false;
-				}
-				CurrentContainer = ObjectValue;
-				CurrentStruct = ObjectValue->GetClass();
-			}
-			else
-			{
-				OutError = FString::Printf(TEXT("Cannot traverse property '%s' - not a struct or object"), *PropertyName);
-				return false;
-			}
-		}
-
-		OutProperty = CurrentProperty;
-		OutContainer = CurrentContainer;
-		return OutProperty != nullptr;
-	}
-
-	static bool TryResolveInnerAnimNodePropertyPath(
-		UObject* Object,
-		const FString& PropertyName,
-		FProperty*& OutProperty,
-		void*& OutContainer,
-		FString& OutError)
-	{
-		if (!Object)
-		{
-			return false;
-		}
-
-		FStructProperty* InnerNodeProp = CastField<FStructProperty>(Object->GetClass()->FindPropertyByName(TEXT("Node")));
-		void* InnerNodeContainer = InnerNodeProp ? InnerNodeProp->ContainerPtrToValuePtr<void>(Object) : nullptr;
-		UScriptStruct* InnerNodeStruct = InnerNodeProp ? InnerNodeProp->Struct : nullptr;
-		if (!InnerNodeStruct || !InnerNodeContainer)
-		{
-			return false;
-		}
-
-		FString InnerPath = PropertyName;
-		if (InnerPath.StartsWith(TEXT("Node."), ESearchCase::IgnoreCase))
-		{
-			InnerPath = InnerPath.RightChop(5);
-		}
-
-		return ResolvePropertyPathAgainstStruct(InnerNodeStruct, InnerNodeContainer, InnerPath, OutProperty, OutContainer, OutError);
-	}
-
 	static bool SetNamedPropertyValue(UObject* Object, const TCHAR* PropertyName, const TSharedPtr<FJsonValue>& Value, TArray<FString>& Errors)
 	{
 		if (!Object)
@@ -277,22 +81,20 @@ namespace
 			return false;
 		}
 
-		FStructProperty* InnerNodeProp = CastField<FStructProperty>(Object->GetClass()->FindPropertyByName(TEXT("Node")));
-		void* InnerNodeContainer = InnerNodeProp ? InnerNodeProp->ContainerPtrToValuePtr<void>(Object) : nullptr;
-		UScriptStruct* InnerNodeStruct = InnerNodeProp ? InnerNodeProp->Struct : nullptr;
-		if (!InnerNodeStruct || !InnerNodeContainer)
+		const FBridgeInnerAnimNode InnerNode = FBridgeAnimNodeProperties::FindInnerAnimNode(Object);
+		if (!InnerNode.IsValid())
 		{
 			return false;
 		}
 
-		FProperty* Property = InnerNodeStruct->FindPropertyByName(PropertyName);
+		FProperty* Property = InnerNode.Struct->FindPropertyByName(PropertyName);
 		if (!Property)
 		{
 			return false;
 		}
 
 		FString SetError;
-		if (!FBridgePropertySerializer::DeserializePropertyValue(Property, InnerNodeContainer, Value, SetError))
+		if (!FBridgePropertySerializer::DeserializePropertyValue(Property, InnerNode.Container, Value, SetError))
 		{
 			Errors.Add(FString::Printf(TEXT("Failed to sync inner Node.%s: %s"), PropertyName, *SetError));
 			return false;
@@ -510,6 +312,10 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 		return Errors;
 	}
 
+	// Property names that resolved to neither a UPROPERTY path nor the inner anim node struct.
+	// Tracked separately from Errors so the pin fallback below never has to parse message text.
+	TArray<FString> Unresolved;
+
 	for (const auto& Pair : Properties->Values)
 	{
 		const FString PropertyName = SoftUE::JsonObjectUtils::KeyToString(Pair.Key);
@@ -527,16 +333,14 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 		{
 			FString FindError;
 			if (!FBridgeAssetModifier::FindPropertyByPath(Node, PropertyName, Property, Container, FindError) &&
-				!TryResolveInnerAnimNodePropertyPath(Node, PropertyName, Property, Container, FindError))
+				!FBridgeAnimNodeProperties::ResolveInnerAnimNodePropertyPath(Node, PropertyName, Property, Container, FindError))
 			{
 				if (SyncAnimGraphCacheName(Node, PropertyName, Value, Errors))
 				{
 					continue;
 				}
 
-				FString Msg = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
-				UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
-				Errors.Add(Msg);
+				Unresolved.Add(PropertyName);
 				continue;
 			}
 		}
@@ -558,53 +362,65 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 	// Anim graph nodes expose some values (Alpha, BlendWeight, etc.) as pins
 	// with DefaultValue strings, not as UPROPERTY members.
 	UEdGraphNode* GraphNode = Cast<UEdGraphNode>(Node);
+	TArray<FString> PinNames;
 	if (GraphNode)
 	{
-		TArray<FString> ResolvedByPin;
-		for (const FString& ErrMsg : Errors)
+		for (UEdGraphPin* Pin : GraphNode->Pins)
 		{
-			if (!ErrMsg.StartsWith(TEXT("Property not found: ")))
+			if (FBridgeAnimNodeProperties::IsSettableGraphPin(Pin))
+			{
+				PinNames.Add(Pin->PinName.ToString());
+			}
+		}
+
+		for (int32 Index = Unresolved.Num() - 1; Index >= 0; --Index)
+		{
+			const FString PropName = Unresolved[Index];
+			if (PropName.IsEmpty())
 			{
 				continue;
 			}
-			FString PropName = ErrMsg.RightChop(20);
-			if (PropName.IsEmpty()) continue;
 
 			for (UEdGraphPin* Pin : GraphNode->Pins)
 			{
-				if (Pin && Pin->PinName.ToString() == PropName)
+				if (!FBridgeAnimNodeProperties::IsSettableGraphPin(Pin) || Pin->PinName.ToString() != PropName)
 				{
-					const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropName);
-					if (ValuePtr.IsValid())
-					{
-						FString StringValue;
-						if (ValuePtr->Type == EJson::Number)
-						{
-							StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
-						}
-						else if (ValuePtr->Type == EJson::Boolean)
-						{
-							StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
-						}
-						else
-						{
-							StringValue = ValuePtr->AsString();
-						}
-
-						Pin->DefaultValue = StringValue;
-						ResolvedByPin.Add(PropName);
-						UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
-					}
-					break;
+					continue;
 				}
+
+				const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropName);
+				if (ValuePtr.IsValid())
+				{
+					FString StringValue;
+					if (ValuePtr->Type == EJson::Number)
+					{
+						StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
+					}
+					else if (ValuePtr->Type == EJson::Boolean)
+					{
+						StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
+					}
+					else
+					{
+						StringValue = ValuePtr->AsString();
+					}
+
+					Pin->DefaultValue = StringValue;
+					Unresolved.RemoveAt(Index);
+					UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
+				}
+				break;
 			}
 		}
+	}
 
-		for (const FString& Resolved : ResolvedByPin)
-		{
-			FString ErrToRemove = FString::Printf(TEXT("Property not found: %s"), *Resolved);
-			Errors.Remove(ErrToRemove);
-		}
+	// Whatever is still unresolved is reported with the node class, the inner anim node
+	// struct that was actually searched, and the fields available on it.
+	for (const FString& PropName : Unresolved)
+	{
+		const FString Msg = FBridgeAnimNodeProperties::DescribeUnresolvedProperty(Node, PropName, PinNames);
+		UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
+		Errors.Add(Msg);
 	}
 
 	return Errors;

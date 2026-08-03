@@ -404,8 +404,14 @@ def call_tool_ex(
     if result.get("isError"):
         content = result.get("content", [])
         msg = content[0].get("text", "unknown error") if content else "unknown error"
+        kind = ErrorKind.UNEXPECTED
+        if (
+            tool_name == "find-references"
+            and msg.startswith("find-references node: incomplete_fib_index:")
+        ):
+            kind = ErrorKind.EXPECTED
         raise BridgeError(
-            kind=ErrorKind.UNEXPECTED,
+            kind=kind,
             message=msg,
             tool_name=tool_name,
             arguments=arguments,

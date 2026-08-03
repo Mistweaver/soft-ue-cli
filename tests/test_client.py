@@ -12,11 +12,14 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+
 from soft_ue_cli import client as client_mod
 from soft_ue_cli.client import call_tool, health_check
-from soft_ue_cli.errors import BridgeError
+from soft_ue_cli.errors import BridgeError, ErrorKind
+
 
 _DUMMY_REQUEST = httpx.Request("POST", "http://127.0.0.1:8080/bridge")
+
 
 def _resp(status: int, body: dict | None = None, text: str | None = None) -> httpx.Response:
     """Build an httpx.Response with a dummy request so raise_for_status() works."""
@@ -26,8 +29,10 @@ def _resp(status: int, body: dict | None = None, text: str | None = None) -> htt
         r = httpx.Response(status, json=body or {}, request=_DUMMY_REQUEST)
     return r
 
+
 def _patch_url(url: str = "http://127.0.0.1:8080"):
     return patch("soft_ue_cli.client.get_server_url", return_value=url)
+
 
 @pytest.fixture(autouse=True)
 def _isolated_session_identity(monkeypatch):
@@ -42,7 +47,9 @@ def _isolated_session_identity(monkeypatch):
     yield
     client_mod.clear_session_label()
 
+
 # -- call_tool -----------------------------------------------------------------
+
 
 def test_call_tool_success(monkeypatch):
     payload = {
@@ -55,6 +62,7 @@ def test_call_tool_success(monkeypatch):
         result = call_tool("query-level", {})
     assert result == {"actors": []}
 
+
 def test_call_tool_text_content_non_json(monkeypatch):
     payload = {
         "jsonrpc": "2.0",
@@ -65,6 +73,7 @@ def test_call_tool_text_content_non_json(monkeypatch):
     with _patch_url():
         result = call_tool("get-logs", {})
     assert result == {"text": "plain text response"}
+
 
 def test_call_tool_result_is_error(monkeypatch):
     payload = {
@@ -78,6 +87,27 @@ def test_call_tool_result_is_error(monkeypatch):
             call_tool("spawn-actor", {"class": "BadClass"})
     assert "actor not found" in str(exc.value)
 
+
+def test_call_tool_classifies_incomplete_fib_index_as_expected(monkeypatch):
+    message = (
+        "find-references node: incomplete_fib_index: cache_in_progress=true, "
+        "discovery_in_progress=false, unindexed_count=2, failed_to_cache_count=0, "
+        "candidate_count=1, blueprints_searched=0. Finish Find in Blueprints indexing and retry."
+    )
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "result": {"isError": True, "content": [{"type": "text", "text": message}]},
+    }
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: _resp(200, payload))
+
+    with _patch_url(), pytest.raises(BridgeError) as exc:
+        call_tool("find-references", {"type": "node", "asset_path": "/Game"})
+
+    assert exc.value.kind == ErrorKind.EXPECTED
+    assert exc.value.message == message
+
+
 def test_call_tool_jsonrpc_error(monkeypatch):
     payload = {"jsonrpc": "2.0", "id": "1", "error": {"code": -32601, "message": "Method not found"}}
     monkeypatch.setattr(httpx, "post", lambda url, **kw: _resp(200, payload))
@@ -85,6 +115,7 @@ def test_call_tool_jsonrpc_error(monkeypatch):
         with pytest.raises(BridgeError) as exc:
             call_tool("unknown-tool", {})
     assert "Method not found" in str(exc.value)
+
 
 def test_call_tool_connect_error(monkeypatch):
     def raise_connect(*args, **kw):
@@ -95,6 +126,7 @@ def test_call_tool_connect_error(monkeypatch):
         with pytest.raises(BridgeError) as exc:
             call_tool("status", {})
     assert "cannot connect to SoftUEBridge" in str(exc.value)
+
 
 def test_call_tool_falls_back_when_forced_port_is_stale(monkeypatch, capsys):
     calls: list[str] = []
@@ -125,6 +157,7 @@ def test_call_tool_falls_back_when_forced_port_is_stale(monkeypatch, capsys):
     assert calls == ["http://127.0.0.1:8081/bridge", "http://127.0.0.1:8080/bridge"]
     assert "SOFT_UE_BRIDGE_PORT appears stale" in capsys.readouterr().err
 
+
 def test_call_tool_falls_back_when_forced_port_hits_non_bridge_service(monkeypatch, capsys):
     calls: list[str] = []
     payload = {
@@ -150,6 +183,7 @@ def test_call_tool_falls_back_when_forced_port_hits_non_bridge_service(monkeypat
     assert calls == ["http://127.0.0.1:8081/bridge", "http://127.0.0.1:8080/bridge"]
     assert "SOFT_UE_BRIDGE_PORT appears stale" in capsys.readouterr().err
 
+
 def test_call_tool_handles_remembered_startup_recovery_and_retries(monkeypatch):
     calls = 0
 
@@ -174,6 +208,7 @@ def test_call_tool_handles_remembered_startup_recovery_and_retries(monkeypatch):
     assert calls == 2
     assert handled == ["handled"]
 
+
 def test_connection_recovery_prompts_interactive_user(monkeypatch):
     import soft_ue_cli.startup_recovery as startup_recovery
 
@@ -191,6 +226,7 @@ def test_connection_recovery_prompts_interactive_user(monkeypatch):
     assert note == "handled Unreal startup recovery prompt with action 'recover'"
     assert calls == [("ask", True)]
 
+
 def test_call_tool_http_error(monkeypatch):
     def raise_http(*args, **kw):
         response = httpx.Response(500)
@@ -202,12 +238,14 @@ def test_call_tool_http_error(monkeypatch):
             call_tool("status", {})
     assert "HTTP 500" in str(exc.value)
 
+
 def test_call_tool_non_json_response(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda url, **kw: _resp(200, text="<html>not json</html>"))
     with _patch_url():
         with pytest.raises(BridgeError) as exc:
             call_tool("status", {})
     assert "server returned non-JSON response" in str(exc.value)
+
 
 def test_call_tool_empty_result(monkeypatch):
     payload = {"jsonrpc": "2.0", "id": "1", "result": {}}
@@ -216,7 +254,9 @@ def test_call_tool_empty_result(monkeypatch):
         result = call_tool("set-console-var", {"name": "r.VSync", "value": "0"})
     assert result == {}
 
+
 # -- health_check --------------------------------------------------------------
+
 
 def test_health_check_success(monkeypatch):
     req = httpx.Request("GET", "http://127.0.0.1:8080/bridge")
@@ -224,6 +264,7 @@ def test_health_check_success(monkeypatch):
     with _patch_url():
         result = health_check()
     assert result == {"status": "ok"}
+
 
 def test_health_check_connection_error(monkeypatch):
     def raise_exc(*args, **kw):
@@ -233,6 +274,7 @@ def test_health_check_connection_error(monkeypatch):
     with _patch_url():
         result = health_check()
     assert "error" in result
+
 
 def test_health_check_falls_back_when_forced_port_is_stale(monkeypatch):
     req = httpx.Request("GET", "http://127.0.0.1:8080/bridge")
@@ -255,6 +297,7 @@ def test_health_check_falls_back_when_forced_port_is_stale(monkeypatch):
     assert result["bridge_url"] == "http://127.0.0.1:8080"
     assert calls == ["http://127.0.0.1:8081/bridge", "http://127.0.0.1:8080/bridge"]
 
+
 def test_health_check_falls_back_when_forced_port_hits_non_bridge_service(monkeypatch):
     calls: list[str] = []
 
@@ -274,6 +317,7 @@ def test_health_check_falls_back_when_forced_port_hits_non_bridge_service(monkey
     assert "SOFT_UE_BRIDGE_PORT appears stale" in result["warning"]
     assert calls == ["http://127.0.0.1:8081/bridge", "http://127.0.0.1:8080/bridge"]
 
+
 def test_health_check_timeout(monkeypatch):
     def raise_timeout(*args, **kw):
         raise httpx.TimeoutException("timeout")
@@ -283,7 +327,9 @@ def test_health_check_timeout(monkeypatch):
         result = health_check()
     assert "error" in result
 
+
 # -- session identity ------------------------------------------------------------
+
 
 def test_session_descriptor_is_derived_when_nothing_declared(monkeypatch):
     from soft_ue_cli import client as client_mod
@@ -299,6 +345,7 @@ def test_session_descriptor_is_derived_when_nothing_declared(monkeypatch):
     assert desc["client"] == "cli"
     assert len(desc["origin"]) == 8
 
+
 def test_session_descriptor_prefers_explicit_label_over_env(monkeypatch):
     from soft_ue_cli import client as client_mod
 
@@ -311,12 +358,14 @@ def test_session_descriptor_prefers_explicit_label_over_env(monkeypatch):
     assert desc["label"] == "cape-cloth"
     assert desc["confidence"] == "declared"
 
+
 def test_session_descriptor_falls_back_to_env(monkeypatch):
     from soft_ue_cli import client as client_mod
 
     monkeypatch.setenv("SOFT_UE_SESSION", "from-env")
 
     assert client_mod.session_descriptor()["id"] == "from-env"
+
 
 def test_session_label_does_not_leak_between_threads(monkeypatch):
     """The MCP server is one process on pooled worker threads.
@@ -340,6 +389,7 @@ def test_session_label_does_not_leak_between_threads(monkeypatch):
     assert seen["worker"] == "cape-cloth"
     assert client_mod.session_descriptor()["id"].startswith("unknown:")
 
+
 def test_clear_session_label_releases_a_pooled_thread(monkeypatch):
     """Worker threads are reused, so the next call must not inherit the label."""
     from soft_ue_cli import client as client_mod
@@ -349,6 +399,7 @@ def test_clear_session_label_releases_a_pooled_thread(monkeypatch):
     client_mod.clear_session_label()
 
     assert client_mod.session_descriptor()["confidence"] == "derived"
+
 
 def test_mcp_startup_default_applies_without_a_per_call_label(monkeypatch):
     """create_server()'s m-<uuid8> is a legitimate process-wide identity."""
@@ -362,6 +413,7 @@ def test_mcp_startup_default_applies_without_a_per_call_label(monkeypatch):
     assert desc["id"] == "m-ab12cd34"
     assert desc["confidence"] == "declared"
 
+
 def test_thread_label_wins_over_the_process_default(monkeypatch):
     from soft_ue_cli import client as client_mod
 
@@ -370,6 +422,7 @@ def test_thread_label_wins_over_the_process_default(monkeypatch):
     client_mod.set_session_label("cape-cloth")
 
     assert client_mod.session_descriptor()["id"] == "cape-cloth"
+
 
 def test_origin_id_is_stable_per_directory(monkeypatch, tmp_path):
     from soft_ue_cli import client as client_mod
@@ -380,7 +433,9 @@ def test_origin_id_is_stable_per_directory(monkeypatch, tmp_path):
 
     assert first == second
 
+
 # -- notice extraction ------------------------------------------------------------
+
 
 def test_call_tool_ex_returns_notices_from_result_sibling(monkeypatch):
     from soft_ue_cli.client import call_tool_ex
@@ -400,6 +455,7 @@ def test_call_tool_ex_returns_notices_from_result_sibling(monkeypatch):
     assert result == {"actors": []}
     assert meta.notices == [{"seq": 4, "kind": "ask", "text": "can I rebuild?"}]
 
+
 def test_call_tool_ex_returns_empty_notices_when_absent(monkeypatch):
     from soft_ue_cli.client import call_tool_ex
 
@@ -413,6 +469,7 @@ def test_call_tool_ex_returns_empty_notices_when_absent(monkeypatch):
         _, meta = call_tool_ex("query-level", {})
 
     assert meta.notices == []
+
 
 def test_call_tool_sends_session_descriptor_in_params(monkeypatch):
     from soft_ue_cli import client as client_mod
@@ -434,6 +491,7 @@ def test_call_tool_sends_session_descriptor_in_params(monkeypatch):
 
     assert captured["json"]["params"]["_session"]["id"] == "cape-cloth"
     assert "_session" not in captured["json"]["params"]["arguments"]
+
 
 def test_bridge_error_carries_notices(monkeypatch):
     from soft_ue_cli.client import call_tool
@@ -457,12 +515,15 @@ def test_bridge_error_carries_notices(monkeypatch):
         {"seq": 9, "kind": "notice", "text": "builder started a rebuild"}
     ]
 
+
 # -- session_postmortem ------------------------------------------------------------
+
 
 def _iso_utc(age_minutes: float = 0.0) -> str:
     """A timestamp in FDateTime::ToIso8601 shape, aged by age_minutes."""
     stamp = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
     return f"{stamp.strftime('%Y-%m-%dT%H:%M:%S')}.{stamp.microsecond // 1000:03d}Z"
+
 
 def test_session_postmortem_names_who_shut_the_editor_down(tmp_path):
     from soft_ue_cli.client import session_postmortem
@@ -486,6 +547,7 @@ def test_session_postmortem_names_who_shut_the_editor_down(tmp_path):
     assert "codex:cloth-weld" in text
     assert "build-and-relaunch" in text
     assert "05:09:14" in text
+
 
 def test_session_postmortem_suppresses_a_stale_shutdown_intent(tmp_path):
     """A shutdown_intent outlives the editor that wrote it.
@@ -516,6 +578,7 @@ def test_session_postmortem_suppresses_a_stale_shutdown_intent(tmp_path):
     assert "build-and-relaunch" not in text
     assert text == "  Last known sessions in this project: codex:cloth-weld"
 
+
 def test_session_postmortem_suppresses_a_shutdown_intent_without_written_utc(tmp_path):
     """Every registry that can write shutdown_intent also writes written_utc.
 
@@ -539,6 +602,7 @@ def test_session_postmortem_suppresses_a_shutdown_intent_without_written_utc(tmp
 
     assert "build-and-relaunch" not in text
     assert text == "  Last known sessions in this project: codex:cloth-weld"
+
 
 @pytest.mark.parametrize("written_utc", [12345, "nope", None, {}, "", "2026-13-45T99:99Z"])
 def test_session_postmortem_survives_a_bad_written_utc(tmp_path, written_utc):
@@ -567,6 +631,7 @@ def test_session_postmortem_survives_a_bad_written_utc(tmp_path, written_utc):
         "  Last known sessions in this project: codex:cloth-weld"
     )
 
+
 def test_session_postmortem_accepts_a_naive_written_utc(tmp_path):
     """ToIso8601 has carried a trailing Z, but a naive stamp must read as UTC."""
     from soft_ue_cli.client import session_postmortem
@@ -586,10 +651,12 @@ def test_session_postmortem_accepts_a_naive_written_utc(tmp_path):
 
     assert "build-and-relaunch" in session_postmortem(tmp_path)
 
+
 def test_session_postmortem_is_empty_without_records(tmp_path):
     from soft_ue_cli.client import session_postmortem
 
     assert session_postmortem(tmp_path) == ""
+
 
 def test_session_postmortem_survives_malformed_json(tmp_path):
     from soft_ue_cli.client import session_postmortem
@@ -600,6 +667,7 @@ def test_session_postmortem_survives_malformed_json(tmp_path):
 
     assert session_postmortem(tmp_path) == ""
 
+
 def test_session_postmortem_survives_root_not_an_object(tmp_path):
     from soft_ue_cli.client import session_postmortem
 
@@ -608,6 +676,7 @@ def test_session_postmortem_survives_root_not_an_object(tmp_path):
     (bridge_dir / "sessions.json").write_text(json.dumps(["just", "a", "list"]))
 
     assert session_postmortem(tmp_path) == ""
+
 
 def test_session_postmortem_survives_shutdown_intent_not_an_object(tmp_path):
     from soft_ue_cli.client import session_postmortem
@@ -621,6 +690,7 @@ def test_session_postmortem_survives_shutdown_intent_not_an_object(tmp_path):
 
     assert session_postmortem(tmp_path) == ""
 
+
 def test_session_postmortem_survives_non_dict_session_entries(tmp_path):
     from soft_ue_cli.client import session_postmortem
 
@@ -631,6 +701,7 @@ def test_session_postmortem_survives_non_dict_session_entries(tmp_path):
     }))
 
     assert session_postmortem(tmp_path) == ""
+
 
 def test_session_postmortem_names_last_known_sessions_without_shutdown_intent(tmp_path):
     from soft_ue_cli.client import session_postmortem
@@ -647,6 +718,7 @@ def test_session_postmortem_names_last_known_sessions_without_shutdown_intent(tm
     text = session_postmortem(tmp_path)
 
     assert text == "  Last known sessions in this project: codex:cloth-weld, claude:parkour"
+
 
 def test_connect_error_message_includes_postmortem(monkeypatch, tmp_path):
     """The motivating path: no mocked session_postmortem, a real file, a real cwd walk-up."""

@@ -4,6 +4,19 @@ All notable changes to soft-ue-cli will be documented in this file.
 
 ## Unreleased
 
+## [1.45.0] - 2026-08-03
+
+### Added
+- Added all runtime-supported Chaos legacy cloth weight-map targets to `cloth apply-weightmap`.
+- Added repeatable/comma-separated `--section-index` selection for merged legacy cloth, preserving weights outside the selected source sections.
+- `exec-console-command --pie-instance N` targets a specific multi-client PIE world while `--player-index N` selects a local controller within that world. Console results now identify the selected PIE instance, world, and net mode.
+- `pie-session get-state` now reports every active PIE world through additive `worlds` and `world_count` fields while retaining the first world's legacy top-level fields.
+
+### Fixed
+- `blueprint node property` and `blueprint node add` now provide actionable AnimGraph property-path diagnostics, including the node class, searched inner struct, unresolved field, available fields, and settable pins; malformed array indices are rejected instead of being partially parsed.
+- `find-references node` now rejects incomplete Find in Blueprints results when indexing is not ready or contains failed-cache entries and fallback candidates cannot all be traversed, while preserving intentional result-limit truncation. All `find-references` modes now reject non-positive `--limit` values instead of reporting a false-complete truncated result.
+- `cloth query` now validates imported section clothing metadata directly and reports malformed bindings through additive `binding_warnings` fields instead of passing unsafe metadata to engine binding helpers.
+
 ## [1.44.0] - 2026-07-28
 
 ### Added

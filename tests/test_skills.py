@@ -6,14 +6,18 @@ from pathlib import Path
 
 import pytest
 
+
 from soft_ue_cli.skills import get_skill, list_skills
 from soft_ue_cli.__main__ import build_parser, cmd_skills
 
+
 # -- list_skills ---------------------------------------------------------------
+
 
 def test_list_skills_returns_nonempty():
     skills = list_skills()
     assert len(skills) > 0
+
 
 def test_list_skills_items_have_name_and_description():
     for skill in list_skills():
@@ -21,6 +25,7 @@ def test_list_skills_items_have_name_and_description():
         assert "description" in skill
         assert isinstance(skill["name"], str)
         assert isinstance(skill["description"], str)
+
 
 def test_list_skills_contains_blueprint_to_cpp():
     names = [s["name"] for s in list_skills()]
@@ -36,7 +41,9 @@ def test_list_skills_contains_blueprint_to_cpp():
     assert "author-umg-designer" not in names
     assert "author-umg-workflow" not in names
 
+
 # -- get_skill -----------------------------------------------------------------
+
 
 def test_get_skill_returns_content():
     content = get_skill("blueprint-to-cpp")
@@ -46,6 +53,7 @@ def test_get_skill_returns_content():
     assert "Dependency-first planning" in content
     assert "soft-ue-cli query-enum" in content
     assert "soft-ue-cli query-struct" in content
+
 
 def test_test_tools_contains_idempotent_teardown_and_insights_stop():
     content = get_skill("test-tools")
@@ -91,6 +99,25 @@ def test_test_tools_contains_idempotent_teardown_and_insights_stop():
     assert "umg preview help" in content
     assert "umg workflow help" in content
 
+
+def test_test_tools_cloth_query_exercises_binding_warning_contract():
+    content = get_skill("test-tools")
+
+    assert content is not None
+    assert '"binding_warnings" in r' in content
+    assert '"binding_warning_count" in r' in content
+
+
+def test_test_tools_executes_extended_section_aware_cloth_weightmap_smoke():
+    content = get_skill("test-tools")
+
+    assert content is not None
+    assert 'run_cli("cloth apply-weightmap extended section smoke"' in content
+    assert '"--target", "edge-stiffness"' in content
+    assert '"--section-index", f"{_cloth_sections[0]},{_cloth_sections[1]}"' in content
+    assert '"--section-index", str(_cloth_sections[2])' in content
+
+
 def test_test_tools_contains_session_suite():
     """The session leaves must be exercised by the integration script.
 
@@ -113,6 +140,7 @@ def test_test_tools_contains_session_suite():
     # Identity is per-command, so every leaf carries --as.
     assert content.count('"--as", SESSION_NAME') >= 7
 
+
 def test_test_tools_contains_config_suite():
     content = get_skill("test-tools")
     assert content is not None
@@ -128,6 +156,7 @@ def test_test_tools_contains_config_suite():
     assert 'run_cli("config audit"' in content
     assert "OfflineSearchKey_" in content
 
+
 def test_test_tools_contains_new_automation_features():
     content = get_skill("test-tools")
     assert content is not None
@@ -137,17 +166,21 @@ def test_test_tools_contains_new_automation_features():
     assert "batch-call pie/query/logs smoke" in content
     assert "call-function transient native" in content
 
+
 def test_get_skill_nonexistent_returns_none():
     assert get_skill("nonexistent-skill-xyz") is None
+
 
 def test_get_skill_path_traversal_returns_none():
     assert get_skill("../../../README") is None
     assert get_skill("..\\..\\README") is None
     assert get_skill(".hidden") is None
 
+
 def test_get_skill_content_has_frontmatter():
     content = get_skill("blueprint-to-cpp")
     assert content.startswith("---")
+
 
 def test_replay_changes_skill_mentions_bundle_workflow():
     content = get_skill("replay-changes")
@@ -156,6 +189,7 @@ def test_replay_changes_skill_mentions_bundle_workflow():
     assert "Perforce workflow" in content
     assert "git show :1:" in content
     assert "p4 sync" in content
+
 
 def test_author_test_skill_mentions_supported_subskills():
     content = get_skill("author-test")
@@ -168,6 +202,7 @@ def test_author_test_skill_mentions_supported_subskills():
     assert "author-bp-parity-test" in content
     assert "author-invariant-test" in content
     assert "C++ scaffold" in content
+
 
 def test_authoring_subskills_target_cpp_committed_tests():
     regression = get_skill("author-regression-test")
@@ -189,6 +224,7 @@ def test_authoring_subskills_target_cpp_committed_tests():
     assert "single-property invariant" in invariant
     assert "Source/<Project>Tests/Private/Invariants/TEST_<Slug>.cpp" in invariant
 
+
 def test_author_umg_skill_targets_designer_navigation_and_runtime_verification():
     content = get_skill("author-umg")
     assert content is not None
@@ -208,8 +244,10 @@ def test_author_umg_skill_targets_designer_navigation_and_runtime_verification()
     assert "stable widget-name contract" in content
     assert "click_sequence" in content
 
+
 def test_session_protocol_skill_is_listed():
     assert "session-protocol" in {skill["name"] for skill in list_skills()}
+
 
 def test_session_protocol_skill_states_silence_is_not_consent():
     body = get_skill("session-protocol")
@@ -218,6 +256,7 @@ def test_session_protocol_skill_states_silence_is_not_consent():
     assert "session announce" in body
     assert "silence is not consent" in body.lower()
     assert "stale" in body
+
 
 def test_session_protocol_skill_names_the_real_roster_field():
     """The liveness grade ships as `state`, not `liveness` (RecordToJson).
@@ -232,6 +271,7 @@ def test_session_protocol_skill_names_the_real_roster_field():
         assert grade in body
     assert "`liveness`" not in body
 
+
 def test_session_protocol_skill_warns_identity_is_per_command():
     """`export` does not persist between Claude Code Bash calls."""
     body = get_skill("session-protocol")
@@ -239,6 +279,7 @@ def test_session_protocol_skill_warns_identity_is_per_command():
     assert "export" in body
     assert "SOFT_UE_SESSION=" in body
     assert "--as" in body
+
 
 def test_session_protocol_skill_scopes_the_as_flag_to_session_commands():
     """`--as` is on the seven `session` leaves only.
@@ -256,6 +297,7 @@ def test_session_protocol_skill_scopes_the_as_flag_to_session_commands():
         if line.startswith("SOFT_UE_SESSION=") or line.startswith("soft-ue-cli "):
             assert "--as" not in line, f"example mixes identity forms: {line}"
 
+
 def test_session_protocol_skill_names_the_cost_of_mixing_identity_forms():
     """A split identity is silent: the `pie` claim lands on a nameless row."""
     body = get_skill("session-protocol")
@@ -263,6 +305,7 @@ def test_session_protocol_skill_names_the_cost_of_mixing_identity_forms():
     assert "unknown:" in body
     assert "session inbox --as cape-cloth" in body
     assert "session leave --as cape-cloth" in body
+
 
 def test_session_protocol_skill_separates_derived_from_declared():
     body = get_skill("session-protocol")
@@ -273,11 +316,13 @@ def test_session_protocol_skill_separates_derived_from_declared():
     assert "taskkill" in body
     assert "Build.bat" in body
 
+
 # -- skill file validation -----------------------------------------------------
+
 
 def test_all_skills_have_required_frontmatter():
     """Every .md skill file must have name, description, and version in frontmatter."""
-    skills_dir = Path(__file__).parents[2] / "cli" / "soft_ue_cli" / "skills"
+    skills_dir = Path(__file__).parents[1] / "soft_ue_cli" / "skills"
     for md_file in skills_dir.glob("*.md"):
         text = md_file.read_text(encoding="utf-8")
         assert text.startswith("---"), f"{md_file.name} missing frontmatter"
@@ -288,13 +333,16 @@ def test_all_skills_have_required_frontmatter():
         assert "description:" in front, f"{md_file.name} missing description"
         assert "version:" in front, f"{md_file.name} missing version"
 
+
 # -- CLI argument parsing ------------------------------------------------------
+
 
 def test_parser_skills_list():
     parser = build_parser()
     args = parser.parse_args(["skills", "list"])
     assert args.command == "skills"
     assert args.skills_action == "list"
+
 
 def test_parser_skills_get():
     parser = build_parser()
@@ -303,11 +351,13 @@ def test_parser_skills_get():
     assert args.skills_action == "get"
     assert args.skill_name == "blueprint-to-cpp"
 
+
 def test_cmd_skills_list_prints_output(capsys):
     args = build_parser().parse_args(["skills", "list"])
     cmd_skills(args)
     out = capsys.readouterr().out
     assert "blueprint-to-cpp" in out
+
 
 def test_cmd_skills_get_prints_content(capsys):
     args = build_parser().parse_args(["skills", "get", "blueprint-to-cpp"])
@@ -316,11 +366,13 @@ def test_cmd_skills_get_prints_content(capsys):
     assert "---" in out
     assert "name: blueprint-to-cpp" in out
 
+
 def test_cmd_skills_get_nonexistent_exits():
     args = build_parser().parse_args(["skills", "get", "no-such-skill"])
     with pytest.raises(SystemExit) as exc:
         cmd_skills(args)
     assert exc.value.code == 1
+
 
 def test_every_skill_file_is_force_included_in_the_wheel():
     """Hatchling drops non-.py files unless listed, so a new skill ships broken
