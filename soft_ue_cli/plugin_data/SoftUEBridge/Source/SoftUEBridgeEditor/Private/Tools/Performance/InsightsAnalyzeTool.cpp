@@ -166,20 +166,32 @@ namespace
 		ETraceFrameType FrameType,
 		const FInsightsAnalysisWindow& Window,
 		TArray<double>& OutDurations,
-		TArray<TraceServices::FFrame>& OutFrames)
+		TArray<TraceServices::FFrame>& OutFrames,
+		int32& OutSkippedFrames)
 	{
+		OutSkippedFrames = 0;
+
 		FrameProvider.EnumerateFrames(
 			FrameType,
 			Window.StartTime,
 			Window.EndTime,
-			[&OutDurations, &OutFrames](const TraceServices::FFrame& Frame)
+			[&OutDurations, &OutFrames, &OutSkippedFrames](const TraceServices::FFrame& Frame)
 			{
 				const double Duration = Frame.EndTime - Frame.StartTime;
-				if (Duration >= 0.0)
+
+				// A frame still open when tracing stopped has no meaningful end time,
+				// which yields an infinite duration. Including even one poisons the
+				// total, max and average (and drives average_fps to zero), so drop
+				// them - but report how many were dropped rather than hiding it.
+				// The comparison also rejects NaN, since NaN compares false.
+				if (!(Duration >= 0.0 && Duration < TNumericLimits<double>::Max()))
 				{
-					OutDurations.Add(Duration);
-					OutFrames.Add(Frame);
+					++OutSkippedFrames;
+					return;
 				}
+
+				OutDurations.Add(Duration);
+				OutFrames.Add(Frame);
 			});
 	}
 
@@ -514,7 +526,13 @@ FBridgeToolResult UInsightsAnalyzeTool::Execute(
 	FInsightsAnalysisWindow Window;
 	Arguments->TryGetNumberField(TEXT("start_time"), Window.StartTime);
 	Arguments->TryGetNumberField(TEXT("end_time"), Window.EndTime);
-	Window.ResolveAgainstSession(*Session);
+	{
+		// GetDurationSeconds() is a session read: it asserts if called outside a
+		// read scope, even though it reads like a plain accessor. Scoped tightly
+		// so the per-analysis scopes below are not nested inside this one.
+		TraceServices::FAnalysisSessionReadScope WindowReadScope(*Session);
+		Window.ResolveAgainstSession(*Session);
+	}
 
 	if (AnalysisType == TEXT("frame_stats"))
 	{
@@ -593,12 +611,14 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeFrameStats(
 {
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 	Result->SetStringField(TEXT("analysis_type"), TEXT("frame_stats"));
-	Result->SetStringField(TEXT("session_name"), Session.GetName() ? Session.GetName() : TEXT(""));
-	Result->SetNumberField(TEXT("trace_duration_seconds"), Session.GetDurationSeconds());
 	Result->SetNumberField(TEXT("window_start_seconds"), Window.StartTime);
 	Result->SetNumberField(TEXT("window_end_seconds"), Window.EndTime);
 
 	TraceServices::FAnalysisSessionReadScope ReadScope(Session);
+
+	// GetName()/GetDurationSeconds() are session reads and must stay inside the scope.
+	Result->SetStringField(TEXT("session_name"), Session.GetName() ? Session.GetName() : TEXT(""));
+	Result->SetNumberField(TEXT("trace_duration_seconds"), Session.GetDurationSeconds());
 
 	const TraceServices::IFrameProvider& FrameProvider = TraceServices::ReadFrameProvider(Session);
 
@@ -611,14 +631,20 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeFrameStats(
 
 		TArray<double> Durations;
 		TArray<TraceServices::FFrame> Frames;
-		CollectFrameDurations(FrameProvider, FrameType, Window, Durations, Frames);
+		int32 SkippedFrames = 0;
+		CollectFrameDurations(FrameProvider, FrameType, Window, Durations, Frames, SkippedFrames);
 
 		if (Durations.Num() > 0)
 		{
 			bAnyFrames = true;
 		}
 
-		ByType->SetObjectField(FrameTypeToString(FrameType), BuildDurationStatsJson(Durations, HitchThresholdMs));
+		TSharedPtr<FJsonObject> TypeStats = BuildDurationStatsJson(Durations, HitchThresholdMs);
+		if (SkippedFrames > 0)
+		{
+			TypeStats->SetNumberField(TEXT("incomplete_frames_skipped"), SkippedFrames);
+		}
+		ByType->SetObjectField(FrameTypeToString(FrameType), TypeStats);
 	}
 
 	Result->SetObjectField(TEXT("frames"), ByType);
@@ -673,9 +699,17 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeTopFunctions(
 		}
 	}
 
-	Result->SetNumberField(TEXT("timer_count"), static_cast<double>(Table->GetRowCount()));
+	// GetRowCount() is the aggregation's row count, which TableEntryLimit has already
+	// capped - it is NOT how many timers the trace contains, so don't name it that.
+	Result->SetNumberField(TEXT("returned_count"), static_cast<double>(Timers.Num()));
 	Result->SetArrayField(TEXT("timers"), Timers);
 	Result->SetStringField(TEXT("sorted_by"), TEXT("total_inclusive_ms"));
+	if (Timers.Num() >= TopN)
+	{
+		Result->SetStringField(
+			TEXT("note"),
+			TEXT("Results are capped at top_n; raise it to see more timers."));
+	}
 
 	return FBridgeToolResult::Json(Result);
 }
@@ -1049,19 +1083,23 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeBottlenecks(
 {
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 	Result->SetStringField(TEXT("analysis_type"), TEXT("bottlenecks"));
-	Result->SetStringField(TEXT("session_name"), Session.GetName() ? Session.GetName() : TEXT(""));
-	Result->SetNumberField(TEXT("trace_duration_seconds"), Session.GetDurationSeconds());
 	Result->SetNumberField(TEXT("window_start_seconds"), Window.StartTime);
 	Result->SetNumberField(TEXT("window_end_seconds"), Window.EndTime);
 
 	TraceServices::FAnalysisSessionReadScope ReadScope(Session);
+
+	// GetName()/GetDurationSeconds() are session reads and must stay inside the scope.
+	Result->SetStringField(TEXT("session_name"), Session.GetName() ? Session.GetName() : TEXT(""));
+	Result->SetNumberField(TEXT("trace_duration_seconds"), Session.GetDurationSeconds());
 
 	// --- Frame health, and the worst frames worth jumping to in the Insights UI ---
 	const TraceServices::IFrameProvider& FrameProvider = TraceServices::ReadFrameProvider(Session);
 
 	TArray<double> GameDurations;
 	TArray<TraceServices::FFrame> GameFrames;
-	CollectFrameDurations(FrameProvider, TraceFrameType_Game, Window, GameDurations, GameFrames);
+	int32 SkippedGameFrames = 0;
+	CollectFrameDurations(
+		FrameProvider, TraceFrameType_Game, Window, GameDurations, GameFrames, SkippedGameFrames);
 
 	// BuildDurationStatsJson sorts its input, so capture worst frames from the
 	// unsorted frame list first.
@@ -1092,7 +1130,12 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeBottlenecks(
 		WorstFrames.Add(MakeShareable(new FJsonValueObject(FrameJson)));
 	}
 
-	Result->SetObjectField(TEXT("game_frames"), BuildDurationStatsJson(GameDurations, HitchThresholdMs));
+	TSharedPtr<FJsonObject> GameFrameStats = BuildDurationStatsJson(GameDurations, HitchThresholdMs);
+	if (SkippedGameFrames > 0)
+	{
+		GameFrameStats->SetNumberField(TEXT("incomplete_frames_skipped"), SkippedGameFrames);
+	}
+	Result->SetObjectField(TEXT("game_frames"), GameFrameStats);
 	Result->SetArrayField(TEXT("worst_frames"), WorstFrames);
 
 	// --- Heaviest timers: inclusive cost, plus self-cost for narrowing the culprit ---
