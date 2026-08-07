@@ -1840,6 +1840,16 @@ def test_insights_analyze_reads_traces_through_trace_services_providers():
     for field in ("median_ms", "p90_ms", "p95_ms", "p99_ms", "hitch_count"):
         assert field in source
 
+    # A frame still open when tracing stops has an infinite duration, and even one
+    # poisons total/max/average and drives average_fps to zero. Drop them, but say so.
+    assert "incomplete_frames_skipped" in source
+    assert "TNumericLimits<double>::Max()" in source
+
+    # GetRowCount() is already capped by TableEntryLimit, so it must not be
+    # presented as the number of timers in the trace.
+    assert '"timer_count"' not in source
+    assert "returned_count" in source
+
     assert "FInsightsAnalysisWindow" in header
 
 
