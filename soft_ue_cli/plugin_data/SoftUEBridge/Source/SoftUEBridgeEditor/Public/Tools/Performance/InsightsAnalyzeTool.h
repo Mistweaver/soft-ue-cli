@@ -28,8 +28,8 @@ struct FInsightsAnalysisWindow
  * Unreal Insights UI does: frame timings, aggregated CPU/GPU timers, counters
  * and threads.
  *
- * Analysis types: basic_info, frame_stats, top_functions, counters, threads,
- * bottlenecks.
+ * Analysis types: basic_info, frame_stats, top_functions, call_tree, counters,
+ * csv_stats, threads, bottlenecks.
  */
 UCLASS()
 class SOFTUEBRIDGEEDITOR_API UInsightsAnalyzeTool : public UBridgeToolBase
@@ -56,6 +56,28 @@ private:
 	FBridgeToolResult AnalyzeTopFunctions(
 		const TraceServices::IAnalysisSession& Session,
 		const FInsightsAnalysisWindow& Window,
+		int32 TopN);
+
+	/**
+	 * Caller/callee (butterfly) tree rooted at a named timer - the hierarchical
+	 * "what is actually inside this scope" view that a flat aggregation cannot give.
+	 */
+	FBridgeToolResult AnalyzeCallTree(
+		const TraceServices::IAnalysisSession& Session,
+		const FInsightsAnalysisWindow& Window,
+		const FString& TimerName,
+		bool bCallers,
+		int32 MaxDepth,
+		int32 TopN);
+
+	/**
+	 * CSV profiler captures embedded in the trace. This is where the CSV-only
+	 * stats live (WorldTickMisc, Ticks/*, ...) - they are NOT CPU timers and do
+	 * not appear in top_functions or call_tree.
+	 */
+	FBridgeToolResult AnalyzeCsvStats(
+		const TraceServices::IAnalysisSession& Session,
+		const FString& ColumnFilter,
 		int32 TopN);
 
 	/** Trace counters (stats) with min/max/average over the window. */

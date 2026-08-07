@@ -1823,7 +1823,9 @@ def test_insights_analyze_reads_traces_through_trace_services_providers():
         "basic_info",
         "frame_stats",
         "top_functions",
+        "call_tree",
         "counters",
+        "csv_stats",
         "threads",
         "bottlenecks",
     ):
@@ -1877,9 +1879,90 @@ def test_insights_analyze_cli_exposes_every_analysis_type():
         "basic_info",
         "frame_stats",
         "top_functions",
+        "call_tree",
         "counters",
+        "csv_stats",
         "threads",
         "bottlenecks",
     ):
         parsed = parser.parse_args(["insights-analyze", "T.utrace", "--analysis-type", analysis_type])
         assert parsed.analysis_type == analysis_type
+
+    tree = parser.parse_args(
+        [
+            "insights-analyze",
+            "T.utrace",
+            "--analysis-type",
+            "call_tree",
+            "--timer-name",
+            "UWorld_Tick",
+            "--direction",
+            "callers",
+            "--max-depth",
+            "6",
+        ]
+    )
+    assert tree.timer_name == "UWorld_Tick"
+    assert tree.direction == "callers"
+    assert tree.max_depth == 6
+
+    csv = parser.parse_args(
+        ["insights-analyze", "T.utrace", "--analysis-type", "csv_stats", "--column-filter", "Ticks/"]
+    )
+    assert csv.column_filter == "Ticks/"
+
+
+def test_insights_call_tree_uses_butterfly_and_resolves_timer_names():
+    source = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Performance/InsightsAnalyzeTool.cpp"
+    ).read_text(encoding="utf-8")
+
+    # The butterfly aggregation is the hierarchical view a flat aggregation cannot give.
+    assert "CreateButterfly" in source
+    assert "GenerateCalleesTree" in source
+    assert "GenerateCallersTree" in source
+    assert "FCreateButterflyParams" in source
+
+    # Callers pass a timer *name*; it has to be resolved to an id via the timer reader.
+    assert "ResolveTimerId" in source
+    assert "GetTimerCount" in source
+
+    # ReadTimers() was deprecated in 5.8 for GetTimerReader(), which 5.7 lacks -
+    # both paths must stay guarded or one engine version breaks.
+    assert "GetTimerReader()" in source
+    assert "ReadTimers(ScanTimers)" in source
+    assert "ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8" in source
+
+    # A failed lookup must suggest near-misses rather than just failing.
+    assert "Did you mean one of" in source
+
+    # A truncated tree must never be mistaken for a leaf.
+    assert "omitted_children" in source
+    assert "depth_limited" in source
+
+    # Shipping strips CPU scopes entirely - the error has to say so, since no
+    # amount of re-analysis will recover them.
+    assert "CPUPROFILERTRACE_ENABLED" in source
+    assert "UE_BUILD_SHIPPING" in source
+
+
+def test_insights_csv_stats_reads_the_csv_profiler_provider():
+    source = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Performance/InsightsAnalyzeTool.cpp"
+    ).read_text(encoding="utf-8")
+
+    # CSV stats live in their own provider, separate from CPU timers and counters.
+    assert "ReadCsvProfilerProvider" in source
+    assert "EnumerateCaptures" in source
+    assert "GetTable" in source
+    assert "ITableLayout" in source
+    assert "IUntypedTableReader" in source
+
+    # Column names are cheap to list and are how an agent discovers what to filter on.
+    assert "column_names" in source
+    assert "column_filter" in source
+
+    # The residual-bucket nature of exclusive CSV stats is the key interpretive
+    # point; without it a large WorldTickMisc reads as "a slow function".
+    assert "WorldTickMisc" in source
+    assert "residual" in source

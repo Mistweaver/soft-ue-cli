@@ -9,7 +9,9 @@
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/ITraceServicesModule.h"
 #include "TraceServices/Model/AnalysisSession.h"
+#include "TraceServices/Containers/Tables.h"
 #include "TraceServices/Model/Counters.h"
+#include "TraceServices/Model/CsvProfilerProvider.h"
 #include "TraceServices/Model/Frames.h"
 #include "TraceServices/Model/Threads.h"
 #include "TraceServices/Model/TimingProfiler.h"
@@ -207,6 +209,131 @@ namespace
 			TimingProvider.CreateAggregation(Params));
 	}
 
+	/** Default and maximum depth of the caller/callee tree. */
+	constexpr int32 InsightsDefaultCallTreeDepth = 5;
+	constexpr int32 InsightsMaxCallTreeDepth = 32;
+
+	/** Cap on how many near-miss timer names are offered when a lookup fails. */
+	constexpr int32 InsightsMaxTimerCandidates = 25;
+
+	/**
+	 * Resolves a timer name to its id. Exact (case-insensitive) match wins; if there
+	 * is none, OutCandidates is filled with substring matches so the caller can
+	 * report something actionable instead of just "not found".
+	 * Must be called inside an FAnalysisSessionReadScope.
+	 */
+	bool ResolveTimerId(
+		const TraceServices::ITimingProfilerProvider& TimingProvider,
+		const FString& TimerName,
+		uint32& OutTimerId,
+		TArray<FString>& OutCandidates)
+	{
+		bool bFound = false;
+
+		// The scan body, shared by both engine paths below.
+		auto ScanTimers =
+			[&TimerName, &OutTimerId, &OutCandidates, &bFound](const TraceServices::ITimingProfilerTimerReader& Reader)
+		{
+			const uint32 TimerCount = Reader.GetTimerCount();
+
+			for (uint32 Index = 0; Index < TimerCount; ++Index)
+			{
+				const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(Index);
+				if (Timer && Timer->Name && TimerName.Equals(Timer->Name, ESearchCase::IgnoreCase))
+				{
+					OutTimerId = Timer->Id;
+					bFound = true;
+					return;
+				}
+			}
+
+			for (uint32 Index = 0; Index < TimerCount && OutCandidates.Num() < InsightsMaxTimerCandidates; ++Index)
+			{
+				const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(Index);
+				if (Timer && Timer->Name && FCString::Stristr(Timer->Name, *TimerName) != nullptr)
+				{
+					OutCandidates.Add(Timer->Name);
+				}
+			}
+		};
+
+		// ReadTimers() was deprecated in UE 5.8 in favour of GetTimerReader(),
+		// which does not exist in 5.7.
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+		ScanTimers(TimingProvider.GetTimerReader());
+#else
+		TimingProvider.ReadTimers(ScanTimers);
+#endif
+
+		return bFound;
+	}
+
+	/**
+	 * Serialises a butterfly node and its children, heaviest first.
+	 * Depth and child count are bounded so a deep tree cannot produce unbounded JSON.
+	 */
+	TSharedPtr<FJsonObject> ButterflyNodeToJson(
+		const TraceServices::FTimingProfilerButterflyNode& Node,
+		int32 Depth,
+		int32 MaxDepth,
+		int32 MaxChildren)
+	{
+		TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
+
+		Json->SetStringField(
+			TEXT("name"),
+			(Node.Timer && Node.Timer->Name) ? Node.Timer->Name : TEXT("<unknown>"));
+		Json->SetNumberField(TEXT("count"), static_cast<double>(Node.Count));
+		Json->SetNumberField(TEXT("inclusive_ms"), Node.InclusiveTime * 1000.0);
+		Json->SetNumberField(TEXT("exclusive_ms"), Node.ExclusiveTime * 1000.0);
+
+		TArray<const TraceServices::FTimingProfilerButterflyNode*> Children;
+		Children.Reserve(Node.Children.Num());
+		for (const TraceServices::FTimingProfilerButterflyNode* Child : Node.Children)
+		{
+			if (Child)
+			{
+				Children.Add(Child);
+			}
+		}
+
+		if (Children.Num() == 0)
+		{
+			return Json;
+		}
+
+		if (Depth >= MaxDepth)
+		{
+			// Report what was cut so a truncated tree is never mistaken for a leaf.
+			Json->SetNumberField(TEXT("omitted_children"), Children.Num());
+			Json->SetBoolField(TEXT("depth_limited"), true);
+			return Json;
+		}
+
+		Children.Sort(
+			[](const TraceServices::FTimingProfilerButterflyNode& A,
+			   const TraceServices::FTimingProfilerButterflyNode& B)
+			{
+				return A.InclusiveTime > B.InclusiveTime;
+			});
+
+		const int32 EmittedCount = FMath::Min(MaxChildren, Children.Num());
+		TArray<TSharedPtr<FJsonValue>> ChildrenJson;
+		for (int32 Index = 0; Index < EmittedCount; ++Index)
+		{
+			ChildrenJson.Add(MakeShareable(new FJsonValueObject(
+				ButterflyNodeToJson(*Children[Index], Depth + 1, MaxDepth, MaxChildren))));
+		}
+
+		Json->SetArrayField(TEXT("children"), ChildrenJson);
+		if (Children.Num() > EmittedCount)
+		{
+			Json->SetNumberField(TEXT("omitted_children"), Children.Num() - EmittedCount);
+		}
+
+		return Json;
+	}
+
 	/** Converts one aggregated timer row to JSON. */
 	TSharedPtr<FJsonObject> AggregatedTimerToJson(const TraceServices::FTimingProfilerAggregatedStats& Row)
 	{
@@ -257,8 +384,11 @@ FString UInsightsAnalyzeTool::GetToolDescription() const
 		"Analyze Unreal Insights trace files using the TraceServices providers. "
 		"Analysis types: 'basic_info' (file metadata only), 'frame_stats' (frame timing "
 		"distribution and hitches), 'top_functions' (aggregated CPU/GPU timers by cost), "
-		"'counters' (trace counters/stats), 'threads' (threads in the trace), and "
-		"'bottlenecks' (composite report: frame health, worst frames, heaviest timers). "
+		"'call_tree' (caller/callee butterfly tree rooted at a named timer - decomposes "
+		"what runs inside a scope), 'counters' (trace counters/stats), 'csv_stats' (CSV "
+		"profiler captures - where WorldTickMisc and Ticks/* live; these are NOT CPU "
+		"timers), 'threads' (threads in the trace), and 'bottlenecks' (composite report: "
+		"frame health, worst frames, heaviest timers). "
 		"Supports an optional [start_time, end_time] window.");
 }
 
@@ -280,10 +410,37 @@ TMap<FString, FBridgeSchemaProperty> UInsightsAnalyzeTool::GetInputSchema() cons
 		TEXT("basic_info"),
 		TEXT("frame_stats"),
 		TEXT("top_functions"),
+		TEXT("call_tree"),
 		TEXT("counters"),
+		TEXT("csv_stats"),
 		TEXT("threads"),
 		TEXT("bottlenecks")};
 	Schema.Add(TEXT("analysis_type"), AnalysisType);
+
+	FBridgeSchemaProperty TimerName;
+	TimerName.Type = TEXT("string");
+	TimerName.Description = TEXT("Timer/scope to root the 'call_tree' at, e.g. 'UWorld_Tick' (required for call_tree)");
+	TimerName.bRequired = false;
+	Schema.Add(TEXT("timer_name"), TimerName);
+
+	FBridgeSchemaProperty Direction;
+	Direction.Type = TEXT("string");
+	Direction.Description = TEXT("For 'call_tree': 'callees' (what runs inside the timer, default) or 'callers' (who invokes it)");
+	Direction.bRequired = false;
+	Direction.Enum = {TEXT("callees"), TEXT("callers")};
+	Schema.Add(TEXT("direction"), Direction);
+
+	FBridgeSchemaProperty MaxDepth;
+	MaxDepth.Type = TEXT("integer");
+	MaxDepth.Description = TEXT("Max depth of the 'call_tree' (default: 5, max: 32)");
+	MaxDepth.bRequired = false;
+	Schema.Add(TEXT("max_depth"), MaxDepth);
+
+	FBridgeSchemaProperty ColumnFilter;
+	ColumnFilter.Type = TEXT("string");
+	ColumnFilter.Description = TEXT("For 'csv_stats': case-insensitive substring to select columns, e.g. 'WorldTickMisc' or 'Ticks/'. Omit to summarise the first top_n columns.");
+	ColumnFilter.bRequired = false;
+	Schema.Add(TEXT("column_filter"), ColumnFilter);
 
 	FBridgeSchemaProperty TopN;
 	TopN.Type = TEXT("integer");
@@ -367,9 +524,31 @@ FBridgeToolResult UInsightsAnalyzeTool::Execute(
 	{
 		return AnalyzeTopFunctions(*Session, Window, TopN);
 	}
+	if (AnalysisType == TEXT("call_tree"))
+	{
+		const FString TimerName = GetStringArgOrDefault(Arguments, TEXT("timer_name"));
+		if (TimerName.IsEmpty())
+		{
+			return FBridgeToolResult::Error(TEXT(
+				"analysis_type 'call_tree' requires 'timer_name' (the scope to root the tree at). "
+				"Run analysis_type 'top_functions' first to see the timer names present in this trace."));
+		}
+
+		const bool bCallers = GetStringArgOrDefault(Arguments, TEXT("direction"), TEXT("callees")) == TEXT("callers");
+		const int32 MaxDepth = FMath::Clamp(
+			GetIntArgOrDefault(Arguments, TEXT("max_depth"), InsightsDefaultCallTreeDepth),
+			1,
+			InsightsMaxCallTreeDepth);
+
+		return AnalyzeCallTree(*Session, Window, TimerName, bCallers, MaxDepth, TopN);
+	}
 	if (AnalysisType == TEXT("counters"))
 	{
 		return AnalyzeCounters(*Session, Window, TopN);
+	}
+	if (AnalysisType == TEXT("csv_stats"))
+	{
+		return AnalyzeCsvStats(*Session, GetStringArgOrDefault(Arguments, TEXT("column_filter")), TopN);
 	}
 	if (AnalysisType == TEXT("threads"))
 	{
@@ -382,7 +561,7 @@ FBridgeToolResult UInsightsAnalyzeTool::Execute(
 
 	return FBridgeToolResult::Error(FString::Printf(
 		TEXT("Unknown analysis_type '%s'. Supported: basic_info, frame_stats, top_functions, "
-		     "counters, threads, bottlenecks."),
+		     "call_tree, counters, csv_stats, threads, bottlenecks."),
 		*AnalysisType));
 }
 
@@ -497,6 +676,241 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeTopFunctions(
 	Result->SetNumberField(TEXT("timer_count"), static_cast<double>(Table->GetRowCount()));
 	Result->SetArrayField(TEXT("timers"), Timers);
 	Result->SetStringField(TEXT("sorted_by"), TEXT("total_inclusive_ms"));
+
+	return FBridgeToolResult::Json(Result);
+}
+
+FBridgeToolResult UInsightsAnalyzeTool::AnalyzeCallTree(
+	const TraceServices::IAnalysisSession& Session,
+	const FInsightsAnalysisWindow& Window,
+	const FString& TimerName,
+	bool bCallers,
+	int32 MaxDepth,
+	int32 TopN)
+{
+	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+	Result->SetStringField(TEXT("analysis_type"), TEXT("call_tree"));
+	Result->SetStringField(TEXT("timer_name"), TimerName);
+	Result->SetStringField(TEXT("direction"), bCallers ? TEXT("callers") : TEXT("callees"));
+	Result->SetNumberField(TEXT("max_depth"), MaxDepth);
+	Result->SetNumberField(TEXT("window_start_seconds"), Window.StartTime);
+	Result->SetNumberField(TEXT("window_end_seconds"), Window.EndTime);
+
+	TraceServices::FAnalysisSessionReadScope ReadScope(Session);
+
+	const TraceServices::ITimingProfilerProvider* TimingProvider = TraceServices::ReadTimingProfilerProvider(Session);
+	if (!TimingProvider)
+	{
+		return FBridgeToolResult::Error(TEXT(
+			"This trace has no timing data, so there is no call tree to build. Capture with the "
+			"'cpu' channel. Note that CPU scopes are compiled out of Shipping builds entirely "
+			"(CPUPROFILERTRACE_ENABLED is 0 when UE_BUILD_SHIPPING), so a Shipping capture can "
+			"never contain them - package Development or Test instead."));
+	}
+
+	uint32 TimerId = 0;
+	TArray<FString> Candidates;
+	if (!ResolveTimerId(*TimingProvider, TimerName, TimerId, Candidates))
+	{
+		FString Message = FString::Printf(TEXT("No timer named '%s' in this trace."), *TimerName);
+		if (Candidates.Num() > 0)
+		{
+			Message += FString::Printf(
+				TEXT(" Did you mean one of: %s?"),
+				*FString::Join(Candidates, TEXT(", ")));
+		}
+		else
+		{
+			Message += TEXT(
+				" Run analysis_type 'top_functions' to list the timers present. Note that CSV "
+				"profiler stats (WorldTickMisc, Ticks/*) are NOT CPU timers and never appear "
+				"here - use analysis_type 'csv_stats' for those.");
+		}
+		return FBridgeToolResult::Error(Message);
+	}
+
+	TraceServices::FCreateButterflyParams Params;
+	Params.IntervalStart = Window.StartTime;
+	Params.IntervalEnd = Window.EndTime;
+	Params.CpuThreadFilter = [](uint32 /*ThreadId*/) { return true; };
+	Params.GpuQueueFilter = [](uint32 /*QueueId*/) { return true; };
+
+	TUniquePtr<TraceServices::ITimingProfilerButterfly> Butterfly(TimingProvider->CreateButterfly(Params));
+	if (!Butterfly.IsValid())
+	{
+		return FBridgeToolResult::Error(TEXT("Butterfly aggregation failed for this trace."));
+	}
+
+	const TraceServices::FTimingProfilerButterflyNode& Root =
+		bCallers ? Butterfly->GenerateCallersTree(TimerId) : Butterfly->GenerateCalleesTree(TimerId);
+
+	Result->SetObjectField(TEXT("tree"), ButterflyNodeToJson(Root, 0, MaxDepth, TopN));
+	Result->SetStringField(
+		TEXT("hint"),
+		bCallers
+			? TEXT("'callers' shows which call sites reach this timer and how much time each contributes.")
+			: TEXT("'callees' decomposes this timer: a child's inclusive_ms is time spent under it, "
+			       "while the root's own exclusive_ms is time not attributed to any traced child - "
+			       "if that dominates, the trace has no finer instrumentation to give."));
+
+	return FBridgeToolResult::Json(Result);
+}
+
+FBridgeToolResult UInsightsAnalyzeTool::AnalyzeCsvStats(
+	const TraceServices::IAnalysisSession& Session,
+	const FString& ColumnFilter,
+	int32 TopN)
+{
+	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+	Result->SetStringField(TEXT("analysis_type"), TEXT("csv_stats"));
+	if (!ColumnFilter.IsEmpty())
+	{
+		Result->SetStringField(TEXT("column_filter"), ColumnFilter);
+	}
+
+	TraceServices::FAnalysisSessionReadScope ReadScope(Session);
+
+	const TraceServices::ICsvProfilerProvider* CsvProvider = TraceServices::ReadCsvProfilerProvider(Session);
+	if (!CsvProvider)
+	{
+		return FBridgeToolResult::Error(TEXT(
+			"This trace contains no CSV profiler captures. Capture with the 'csv' channel "
+			"(or run with -csvprofile alongside tracing) to record CSV stats such as "
+			"WorldTickMisc and Ticks/*."));
+	}
+
+	// Capture ids first: GetTable() cannot be called from inside EnumerateCaptures'
+	// callback without re-entering the provider.
+	struct FCaptureRecord
+	{
+		uint32 Id = 0;
+		FString Filename;
+		uint32 FrameCount = 0;
+	};
+	TArray<FCaptureRecord> CaptureRecords;
+
+	CsvProvider->EnumerateCaptures(
+		[&CaptureRecords](const TraceServices::FCaptureInfo& Info)
+		{
+			FCaptureRecord Record;
+			Record.Id = Info.Id;
+			Record.Filename = Info.Filename ? Info.Filename : TEXT("");
+			Record.FrameCount = Info.FrameCount;
+			CaptureRecords.Add(Record);
+		});
+
+	TArray<TSharedPtr<FJsonValue>> CapturesJson;
+	for (const FCaptureRecord& Record : CaptureRecords)
+	{
+		const TraceServices::IUntypedTable& Table = CsvProvider->GetTable(Record.Id);
+		const TraceServices::ITableLayout& Layout = Table.GetLayout();
+		const uint64 ColumnCount = Layout.GetColumnCount();
+
+		TSharedPtr<FJsonObject> CaptureJson = MakeShareable(new FJsonObject);
+		CaptureJson->SetNumberField(TEXT("capture_id"), Record.Id);
+		CaptureJson->SetStringField(TEXT("filename"), Record.Filename);
+		CaptureJson->SetNumberField(TEXT("frame_count"), Record.FrameCount);
+		CaptureJson->SetNumberField(TEXT("row_count"), static_cast<double>(Table.GetRowCount()));
+		CaptureJson->SetNumberField(TEXT("column_count"), static_cast<double>(ColumnCount));
+
+		// Every column name is cheap to list and is what lets an agent discover
+		// what to filter on, so always return the full set.
+		TArray<TSharedPtr<FJsonValue>> AllNames;
+		TArray<uint64> SelectedColumns;
+		for (uint64 ColumnIndex = 0; ColumnIndex < ColumnCount; ++ColumnIndex)
+		{
+			const TCHAR* ColumnName = Layout.GetColumnName(ColumnIndex);
+			const FString NameString = ColumnName ? ColumnName : TEXT("");
+			AllNames.Add(MakeShareable(new FJsonValueString(NameString)));
+
+			const TraceServices::ETableColumnType ColumnType = Layout.GetColumnType(ColumnIndex);
+			const bool bNumeric =
+				ColumnType == TraceServices::TableColumnType_Int ||
+				ColumnType == TraceServices::TableColumnType_Float ||
+				ColumnType == TraceServices::TableColumnType_Double;
+			if (!bNumeric)
+			{
+				continue;
+			}
+
+			const bool bMatches = ColumnFilter.IsEmpty()
+				? SelectedColumns.Num() < TopN
+				: NameString.Contains(ColumnFilter, ESearchCase::IgnoreCase);
+			if (bMatches && SelectedColumns.Num() < TopN)
+			{
+				SelectedColumns.Add(ColumnIndex);
+			}
+		}
+		CaptureJson->SetArrayField(TEXT("column_names"), AllNames);
+
+		// One pass over rows, reading every selected column per row.
+		TArray<double> Totals;
+		TArray<double> Mins;
+		TArray<double> Maxs;
+		TArray<double> Lasts;
+		Totals.Init(0.0, SelectedColumns.Num());
+		Mins.Init(TNumericLimits<double>::Max(), SelectedColumns.Num());
+		Maxs.Init(TNumericLimits<double>::Lowest(), SelectedColumns.Num());
+		Lasts.Init(0.0, SelectedColumns.Num());
+		int64 RowsRead = 0;
+
+		if (SelectedColumns.Num() > 0)
+		{
+			TUniquePtr<TraceServices::IUntypedTableReader> Reader(Table.CreateReader());
+			for (; Reader.IsValid() && Reader->IsValid(); Reader->NextRow())
+			{
+				for (int32 Slot = 0; Slot < SelectedColumns.Num(); ++Slot)
+				{
+					const double Value = Reader->GetValueDouble(SelectedColumns[Slot]);
+					Totals[Slot] += Value;
+					Mins[Slot] = FMath::Min(Mins[Slot], Value);
+					Maxs[Slot] = FMath::Max(Maxs[Slot], Value);
+					Lasts[Slot] = Value;
+				}
+				++RowsRead;
+			}
+		}
+
+		TArray<TSharedPtr<FJsonValue>> ColumnsJson;
+		for (int32 Slot = 0; Slot < SelectedColumns.Num(); ++Slot)
+		{
+			const TCHAR* ColumnName = Layout.GetColumnName(SelectedColumns[Slot]);
+
+			TSharedPtr<FJsonObject> ColumnJson = MakeShareable(new FJsonObject);
+			ColumnJson->SetStringField(TEXT("name"), ColumnName ? ColumnName : TEXT(""));
+			ColumnJson->SetNumberField(TEXT("sample_count"), static_cast<double>(RowsRead));
+			if (RowsRead > 0)
+			{
+				ColumnJson->SetNumberField(TEXT("min"), Mins[Slot]);
+				ColumnJson->SetNumberField(TEXT("max"), Maxs[Slot]);
+				ColumnJson->SetNumberField(TEXT("average"), Totals[Slot] / static_cast<double>(RowsRead));
+				ColumnJson->SetNumberField(TEXT("total"), Totals[Slot]);
+				ColumnJson->SetNumberField(TEXT("last"), Lasts[Slot]);
+			}
+			ColumnsJson.Add(MakeShareable(new FJsonValueObject(ColumnJson)));
+		}
+		CaptureJson->SetArrayField(TEXT("columns"), ColumnsJson);
+
+		if (ColumnFilter.IsEmpty() && ColumnCount > static_cast<uint64>(SelectedColumns.Num()))
+		{
+			CaptureJson->SetStringField(
+				TEXT("note"),
+				TEXT("No column_filter given, so only the first numeric columns were summarised. "
+				     "Pick names from 'column_names' and pass column_filter to target them."));
+		}
+
+		CapturesJson.Add(MakeShareable(new FJsonValueObject(CaptureJson)));
+	}
+
+	Result->SetNumberField(TEXT("capture_count"), CapturesJson.Num());
+	Result->SetArrayField(TEXT("captures"), CapturesJson);
+	Result->SetStringField(
+		TEXT("hint"),
+		TEXT("CSV stats are a separate instrumentation system from Insights CPU timers. "
+		     "Exclusive CSV stats such as WorldTickMisc are residual buckets - time in a scope "
+		     "that no other CSV stat claimed - so a large value names an accounting gap, not a "
+		     "slow function. Use analysis_type 'call_tree' on the corresponding CPU scope "
+		     "(e.g. UWorld_Tick) to decompose it."));
 
 	return FBridgeToolResult::Json(Result);
 }
