@@ -24,6 +24,7 @@ When a new CLI tool, MCP-exposed tool, or new inspect/diff section is added, ext
 - MCP mode also requires — `pip install soft-ue-cli[mcp]`
 - UE running with SoftUEBridge enabled and reachable
 - Optional AnimBlueprint smoke coverage: set `SOFT_UE_TEST_ANIM_BP=/Game/.../ABP_Test`
+- Optional merged-cloth weight-map smoke: set `SOFT_UE_TEST_CLOTH_MESH`, `SOFT_UE_TEST_CLOTH_ASSET_NAME`, and at least three comma-separated `SOFT_UE_TEST_CLOTH_SECTION_INDICES` values.
 
 ## Usage
 
@@ -121,6 +122,18 @@ class MCPClient:
         "skeletal-mesh-socket-create": "asset skeletal-socket create",
         "skeletal-mesh-socket-remove": "asset skeletal-socket remove",
         "metasound-inspect": "metasound inspect",
+        "cloth-query": "cloth query",
+        "cloth-chaos-query": "cloth chaos-query",
+        "cloth-convert": "cloth convert",
+        "cloth-chaos-stitch": "cloth chaos-stitch",
+        "cloth-chaos-set-config": "cloth chaos-set-config",
+        "cloth-chaos-set-weightmap": "cloth chaos-set-weightmap",
+        "cloth-create": "cloth create",
+        "cloth-bind": "cloth bind",
+        "cloth-set-config": "cloth set-config",
+        "cloth-apply-weightmap": "cloth apply-weightmap",
+        "cloth-weld": "cloth weld",
+        "cloth-set-collision": "cloth set-collision",
     }
 
     def __init__(self) -> None:
@@ -381,6 +394,18 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             "compile-customizable-object",
             "remove-customizable-object-node",
             "wire-customizable-object-slot-from-table",
+            "cloth-query",
+            "cloth-chaos-query",
+            "cloth-convert",
+            "cloth-chaos-stitch",
+            "cloth-chaos-set-config",
+            "cloth-chaos-set-weightmap",
+            "cloth-create",
+            "cloth-bind",
+            "cloth-set-config",
+            "cloth-apply-weightmap",
+            "cloth-weld",
+            "cloth-set-collision",
         }
         tool_names = set(info.get("tool_names", [])) if isinstance(info, dict) else set()
         missing_co_tools = sorted(expected_co_tools - tool_names)
@@ -525,6 +550,13 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_test("create-asset Blueprint", "create-asset",
              {"asset_path": bp_path, "asset_class": "/Script/Engine.Blueprint",
               "parent_class": "/Script/Engine.Actor"}, has("asset_path"))
+    run_test("blueprint-component-add root SceneComponent", "blueprint-component-add",
+             {"asset_path": bp_path, "component_class": "SceneComponent",
+              "component_name": "SoftUERoot"}, has("success"))
+    run_test("blueprint-component-add with parent socket", "blueprint-component-add",
+             {"asset_path": bp_path, "component_class": "StaticMeshComponent",
+              "component_name": "SocketAttachedMesh", "attach_to": "SoftUERoot",
+              "attach_socket": "hand_r_socket"}, has("success"))
 
     run_test("create-asset WidgetBlueprint", "create-asset",
              {"asset_path": wbp_path, "asset_class": "WidgetBlueprint"}, has("asset_path"))
@@ -864,6 +896,26 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
 
     run_test("find-references blueprint", "find-references",
              {"asset_path": bp_path, "type": "asset"}, has("referencers"))
+    _fib_args = {"asset_path": bp_path, "type": "node", "node_class": "K2Node"}
+    _fib_t0 = time.time()
+    try:
+        _fib_result = caller("find-references", _fib_args, None)
+        # A successful result must be backed by a match in the known fixture path
+        # or by at least one Blueprint that was actually traversed.
+        _fib_passed = (
+            _fib_result.get("result_complete") is True
+            and (
+                _fib_result.get("count", 0) > 0
+                or _fib_result.get("blueprints_searched", 0) > 0
+            )
+        )
+        _fib_error = None if _fib_passed else f"check failed: {json.dumps(_fib_result)[:200]}"
+    except Exception as exc:
+        _fib_result = None
+        _fib_error = str(exc)[:300]
+        _fib_passed = "incomplete_fib_index" in _fib_error
+    _record("find-references node completeness", "find-references", _fib_args,
+            _fib_passed, int((time.time() - _fib_t0) * 1000), _fib_error)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Suite 11: Materials
@@ -1003,6 +1055,44 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
              timeout=PIE_TIMEOUT)
     time.sleep(4)
     run_test("pie-session status", "pie-session", {"action": "status"}, has("state"), timeout=PIE_TIMEOUT)
+    _pie_discovery_started = time.time()
+    _pie_discovery_valid = False
+    try:
+        _pie_state = caller("pie-session", {"action": "get-state"}, PIE_TIMEOUT)
+        _pie_worlds = _pie_state.get("worlds", [])
+        if not has("world_count")(_pie_state):
+            raise ValueError("pie-session get-state omitted world_count")
+        if not isinstance(_pie_worlds, list):
+            raise ValueError("pie-session get-state returned non-list worlds")
+        if not _pie_worlds:
+            raise ValueError("pie-session get-state returned no PIE worlds")
+        _pie_discovery_valid = True
+        _record("pie-session get-state worlds", "pie-session", {"action": "get-state"},
+                True, int((time.time() - _pie_discovery_started) * 1000), None)
+    except Exception as exc:
+        _pie_worlds = []
+        _record("pie-session get-state worlds", "pie-session", {"action": "get-state"},
+                False, int((time.time() - _pie_discovery_started) * 1000), str(exc)[:300])
+
+    if _pie_discovery_valid:
+        _first_pie_world = _pie_worlds[0]
+        _first_pie_id = _first_pie_world.get("pie_instance")
+        run_test("exec-console-command first discovered PIE instance", "exec-console-command",
+                 {"command": "stat fps", "world": "pie", "pie_instance": _first_pie_id},
+                 lambda r: r.get("pie_instance") == _first_pie_id
+                 and r.get("world_name") == _first_pie_world.get("world_name"), timeout=PIE_TIMEOUT)
+
+    if len(_pie_worlds) >= 2:
+        _second_pie_world = _pie_worlds[1]
+        _second_pie_id = _second_pie_world.get("pie_instance")
+        run_test("exec-console-command second discovered PIE instance", "exec-console-command",
+                 {"command": "stat fps", "world": "pie", "pie_instance": _second_pie_id},
+                 lambda r: r.get("pie_instance") == _second_pie_id
+                 and r.get("world_name") == _second_pie_world.get("world_name")
+                 and r.get("world_name") != _first_pie_world.get("world_name"), timeout=PIE_TIMEOUT)
+    elif len(_pie_worlds) == 1:
+        _record("exec-console-command second discovered PIE instance", "exec-console-command", {},
+                True, 0, "skipped: fewer than two PIE worlds")
     run_test("pie-tick explicit delta", "pie-tick", {
         "frames": 2,
         "delta": 0.0166666,
@@ -1013,6 +1103,10 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
              timeout=PIE_TIMEOUT)
     run_test("exec-console-command stat fps", "exec-console-command",
              {"command": "stat fps", "world": "pie"}, has("success"), timeout=PIE_TIMEOUT)
+    run_test("exec-console-command targeted result", "exec-console-command",
+             {"command": "stat fps", "world": "pie"},
+             lambda r: has("pie_instance")(r) and has("world_name")(r) and has("net_mode")(r),
+             timeout=PIE_TIMEOUT)
     run_test("inspect-pawn-possession", "inspect-pawn-possession",
              {"world": "pie"}, has("pawns"), timeout=PIE_TIMEOUT)
     run_test("verify-umg-workflow preview widget", "verify-umg-workflow", {
@@ -1223,6 +1317,22 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: '"overrides"' in s or '"sections"' in s or "no overrides" in s.lower())
     run_cli("commands json metadata", "commands", "--json",
             check_stdout=lambda s: '"schema": "soft-ue.commands.v1"' in s and '"umg preview replace"' in s)
+    run_cli("mcp surface status", "mcp-surface-status",
+            check_stdout=lambda s: '"schema": "soft-ue.mcp-surface.v1"' in s and '"availability"' in s and '"recommendation"' in s)
+    run_cli("runtime readiness help", "runtime", "readiness", "--help",
+            check_stdout=lambda s: "configuration" in s and "Development" in s)
+    run_cli("runtime binary plan install help", "runtime", "binary", "plan-install", "--help",
+            check_stdout=lambda s: "--manifest" in s and "--ue-version" in s and "--platform" in s)
+    run_cli("runtime smoke plan help", "runtime", "smoke-plan", "--help",
+            check_stdout=lambda s: "--executable" in s and "--bridge-url" in s)
+    run_cli("expert context help", "expert", "context", "--help",
+            check_stdout=lambda s: "--task" in s and "--evidence-json" in s and "SOFT_UE_EXPERT_SERVER_URL" in s)
+    _expert_bad_evidence = os.path.join(tempfile.gettempdir(), f"soft_ue_expert_bad_evidence_{RUN_TS}_{mode_name}.json")
+    with open(_expert_bad_evidence, "w", encoding="utf-8") as fh:
+        json.dump({"kind": "log"}, fh)
+    run_cli("expert context evidence validation", "expert", "context", "--task", "Build fails", "--evidence-json", _expert_bad_evidence,
+            expect_success=False,
+            check_stderr=lambda s: "--evidence-json must contain a JSON list" in s)
     run_cli("commands category umg", "commands", "--category", "umg",
             check_stdout=lambda s: "umg" in s and "removed" not in s)
     run_cli("commands include removed migrations", "commands", "--include-removed", "--json",
@@ -1244,7 +1354,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_cli("capture viewport help", "capture", "viewport", "--help",
             check_stdout=lambda s: "--source" in s and "--scale" in s)
     run_cli("capture screenshot help", "capture", "screenshot", "--help",
-            check_stdout=lambda s: "--source" in s and "pie-window" in s and "--output-file" in s)
+            check_stdout=lambda s: "--source" in s and "pie-window" in s and "--output-file" in s and "--unsafe-slate-window-capture" in s)
     run_cli("mutable graph add-node help", "mutable", "graph", "add-node", "--help",
             check_stdout=lambda s: "mutable graph add-node" in s and "--properties" in s)
     run_cli("statetree inspect help", "statetree", "inspect", "--help",
@@ -1273,6 +1383,24 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "metasound inspect" in s and "asset_path" in s)
     run_cli("asset preview help", "asset", "preview", "--help",
             check_stdout=lambda s: "asset preview" in s and "--resolution" in s)
+    run_cli("cloth query help", "cloth", "query", "--help",
+            check_stdout=lambda s: "cloth query" in s and "skeletal_mesh" in s)
+    run_cli("cloth chaos-query help", "cloth", "chaos-query", "--help",
+            check_stdout=lambda s: "cloth chaos-query" in s and "cloth_asset" in s and "--include-nodes" in s)
+    run_cli("cloth convert help", "cloth", "convert", "--help",
+            check_stdout=lambda s: "cloth convert" in s and "--output-asset" in s and "--asset-name" in s)
+    run_cli("cloth chaos-stitch help", "cloth", "chaos-stitch", "--help",
+            check_stdout=lambda s: "cloth chaos-stitch" in s and "--vertex-pairs" in s and "--first-vertices" in s)
+    run_cli("cloth chaos-set-config help", "cloth", "chaos-set-config", "--help",
+            check_stdout=lambda s: "cloth chaos-set-config" in s and "--properties" in s)
+    run_cli("cloth chaos-set-weightmap help", "cloth", "chaos-set-weightmap", "--help",
+            check_stdout=lambda s: "cloth chaos-set-weightmap" in s and "--vertices" in s and "--z-min" in s)
+    run_cli("cloth create help", "cloth", "create", "--help",
+            check_stdout=lambda s: "cloth create" in s and "--section-index" in s and "--bind" in s)
+    run_cli("cloth apply-weightmap help", "cloth", "apply-weightmap", "--help",
+            check_stdout=lambda s: "cloth apply-weightmap" in s and "--rule" in s and "vertex-color" in s and "bone-distance" in s and "spatial" in s and "--z-min" in s and "edge-stiffness" in s and "--section-index" in s)
+    run_cli("cloth weld help", "cloth", "weld", "--help",
+            check_stdout=lambda s: "cloth weld" in s and "--tolerance" in s and "--z-min" in s)
     run_cli("blueprint graph inspect help", "blueprint", "graph", "inspect", "--help",
             check_stdout=lambda s: "blueprint graph inspect" in s and "--graph-name" in s)
     _umg_expected = os.path.join(tempfile.gettempdir(), f"soft_ue_umg_expected_{RUN_TS}_{mode_name}.json")
@@ -1312,6 +1440,17 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
                 check_stdout=lambda s, _cmd=_co_label: _cmd in s and "CustomizableObject" in s)
     run_cli("mutable compile gather references help", "mutable", "compile", "--help",
             check_stdout=lambda s: "--gather-references" in s)
+    _build_log = os.path.join(tempfile.gettempdir(), f"soft_ue_build_log_{RUN_TS}_{mode_name}.txt")
+    with open(_build_log, "w", encoding="utf-8") as fh:
+        fh.write("Source.cpp(12): error C2664: cannot convert argument\nUnrealHeaderTool failed\n")
+    run_cli("diagnose help", "diagnose", "--help",
+            check_stdout=lambda s: "build-log" in s and "probe" in s and "handoff" in s)
+    run_cli("diagnose build-log smoke", "diagnose", "build-log", _build_log,
+            check_stdout=lambda s: '"schema": "soft_ue.diagnose.build_log.v1"' in s and "compiler_error" in s)
+    run_cli("diagnose probe help", "diagnose", "probe", "--help",
+            check_stdout=lambda s: "--frames" in s and "--capture" in s)
+    run_cli("diagnose data help", "diagnose", "data", "--help",
+            check_stdout=lambda s: "Validate DataTable" in s)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Suite 15: Python Scripting
@@ -1332,8 +1471,19 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_cli("run-python-script saved", "run-python-script", "--name", script_name,
             check_stdout=lambda s: "output" in s or "soft-ue-cli" in s)
     run_cli("run-python-script help", "run-python-script", "--help",
-            check_stdout=lambda s: "--allow-unsafe-python-calls" in s and "--script-path" in s)
+            check_stdout=lambda s: "--allow-unsafe-python-calls" in s and "--script-path" in s and "--args" in s
+            and "--relaunch-on-crash" in s)
+    run_cli("build-and-relaunch local fallback help", "build-and-relaunch", "--help",
+            check_stdout=lambda s: "--no-uba" in s and "--no-xge" in s and "--no-local-build-fallback" in s
+            and "--keep-package-restore" in s)
     run_cli("delete-script", "delete-script", script_name)
+
+    argv_script = os.path.join(os.path.dirname(os.path.abspath(OUTPUT_PATH)), f"soft_ue_argv_{RUN_TS}_{mode_name}.py")
+    with open(argv_script, "w", encoding="utf-8") as fh:
+        fh.write("import sys\nprint('ARGV_CHECK', '|'.join(sys.argv[1:]))\n")
+    run_cli("run-python-script argv args", "run-python-script", "--script-path", argv_script,
+            "--args", "alpha", "--flag=value",
+            check_stdout=lambda s: "ARGV_CHECK alpha|--flag=value" in s)
 
     helper_script = os.path.join(os.path.dirname(os.path.abspath(OUTPUT_PATH)), f"soft_ue_helper_{RUN_TS}_{mode_name}.py")
     with open(helper_script, "w", encoding="utf-8") as fh:
@@ -1617,6 +1767,41 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
         _record("metasound-inspect smoke", "metasound-inspect", {},
                 True, 0, "skipped: set SOFT_UE_TEST_METASOUND_ASSET")
 
+    _cloth_mesh = os.environ.get("SOFT_UE_TEST_CLOTH_MESH", "").strip()
+    if _cloth_mesh:
+        run_test("cloth-query smoke", "cloth-query", {
+            "skeletal_mesh": _cloth_mesh,
+        }, lambda r: r.get("success") is True
+           and "cloth_assets" in r and "bindings" in r
+           and "binding_warnings" in r and "binding_warning_count" in r)
+    else:
+        _record("cloth-query smoke", "cloth-query", {},
+                True, 0, "skipped: set SOFT_UE_TEST_CLOTH_MESH")
+
+    _cloth_asset_name = os.environ.get("SOFT_UE_TEST_CLOTH_ASSET_NAME", "").strip()
+    try:
+        _cloth_sections = [
+            int(value.strip())
+            for value in os.environ.get("SOFT_UE_TEST_CLOTH_SECTION_INDICES", "").split(",")
+            if value.strip()
+        ]
+    except ValueError:
+        _cloth_sections = []
+    if _cloth_mesh and _cloth_asset_name and len(_cloth_sections) >= 3:
+        run_cli("cloth apply-weightmap extended section smoke",
+                "cloth", "apply-weightmap", _cloth_mesh,
+                "--asset-name", _cloth_asset_name,
+                "--target", "edge-stiffness",
+                "--rule", "constant", "--value", "0.5",
+                "--section-index", f"{_cloth_sections[0]},{_cloth_sections[1]}",
+                "--section-index", str(_cloth_sections[2]),
+                check_stdout=lambda s: '"success": true' in s
+                and '"target": "edge-stiffness"' in s
+                and '"section_indices"' in s)
+    else:
+        _record("cloth apply-weightmap extended section smoke", "cloth-apply-weightmap", {},
+                True, 0, "skipped: set SOFT_UE_TEST_CLOTH_MESH/ASSET_NAME and at least three SECTION_INDICES")
+
     run_test("call-function transient native", "call-function", {
         "class_path": "/Script/Engine.Actor",
         "function_name": "K2_GetActorLocation",
@@ -1687,6 +1872,72 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             _stop_ok, int((time.time() - _t0) * 1000), _stop_err)
 
     run_test("insights-list-traces", "insights-list-traces", {}, has("traces"))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Suite 17: Session Channel
+    # ══════════════════════════════════════════════════════════════════════════
+    begin_suite("session")
+
+    # One name for the whole run, passed on every call. --as is per-command:
+    # each run_cli spawns a fresh process, so an exported env var would not carry.
+    SESSION_NAME = f"suet-{RUN_TS}-{mode_name}"
+    _ask_id = None
+
+    def _remember_ask_id(stdout: str) -> bool:
+        nonlocal _ask_id
+        data = json.loads(stdout)
+        _ask_id = data.get("ask_id")
+        return bool(_ask_id) and "active_sessions" in data
+
+    def _roster_includes_self(stdout: str) -> bool:
+        data = json.loads(stdout)
+        labels = [s.get("label") for s in data.get("sessions", [])]
+        return "you" in data and SESSION_NAME in labels
+
+    run_cli("session announce", "session", "announce",
+            "--as", SESSION_NAME,
+            "--status", "soft-ue-cli integration suite",
+            "--intent", "write",
+            "--resources", TEST_NS,
+            check_stdout=lambda s: json.loads(s).get("label") == SESSION_NAME
+                                   and "state" in json.loads(s))
+    run_cli("session list", "session", "list", "--as", SESSION_NAME,
+            check_stdout=_roster_includes_self)
+    run_cli("session broadcast", "session", "broadcast", "--as", SESSION_NAME,
+            "--message", f"integration suite running in {TEST_NS}", "--tag", "fyi",
+            check_stdout=lambda s: "seq" in json.loads(s) and "delivered_to" in json.loads(s))
+
+    # --timeout is left at its default 0 so this returns the posted ask_id
+    # immediately. There is no second session to answer, and polling here would
+    # only burn the suite's clock.
+    run_cli("session ask", "session", "ask", "--as", SESSION_NAME,
+            "--to", SESSION_NAME,
+            "--question", "Integration suite self-addressed question",
+            "--context", "test-tools session coverage",
+            check_stdout=_remember_ask_id)
+
+    if _ask_id:
+        run_cli("session answer", "session", "answer", "--as", SESSION_NAME,
+                "--id", _ask_id,
+                "--answer", "self-answered by the integration suite",
+                "--decision", "yes",
+                check_stdout=lambda s: json.loads(s).get("ok") is True)
+    else:
+        _record("session answer", "soft-ue-cli session answer", {},
+                False, 0, "skipped: session ask returned no ask_id")
+
+    # A session never receives its own messages, so messages/answers are expected
+    # to be empty in a single-session run. Assert the shape, not the contents.
+    run_cli("session inbox", "session", "inbox", "--as", SESSION_NAME,
+            check_stdout=lambda s: all(k in json.loads(s)
+                                       for k in ("messages", "answers", "silent")))
+
+    run_cli("session leave", "session", "leave", "--as", SESSION_NAME,
+            "--reason", "integration suite finished",
+            check_stdout=lambda s: json.loads(s).get("ok") is True)
+    # Leaving twice is harmless — the suite must be re-runnable without cleanup.
+    run_cli("session leave repeat (idempotent)", "session", "leave", "--as", SESSION_NAME,
+            check_stdout=lambda s: json.loads(s).get("ok") is True)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Teardown

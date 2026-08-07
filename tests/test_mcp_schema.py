@@ -1,9 +1,10 @@
-﻿"""Tests for cli/soft_ue_cli/mcp_schema.py ??argparse to MCP tool schema conversion."""
+"""Tests for cli/soft_ue_cli/mcp_schema.py — argparse to MCP tool schema conversion."""
 
 from __future__ import annotations
 
 
 import pytest
+
 
 from soft_ue_cli.mcp_schema import CLIENT_SIDE_COMMANDS, EXCLUDED_COMMANDS, extract_tools
 
@@ -55,6 +56,12 @@ def test_extract_tools_contains_known_command():
     assert "umg runtime inspect" in tool_names
     assert "status" in tool_names
     assert "commands" in tool_names
+    assert "mcp-surface-status" in tool_names
+    assert "runtime readiness" in tool_names
+    assert "runtime binary plan-install" in tool_names
+    assert "runtime binary plan-update" in tool_names
+    assert "runtime binary plan-rollback" in tool_names
+    assert "runtime smoke-plan" in tool_names
     assert "wait-for-ready" in tool_names
     assert "anim sync-marker inspect" in tool_names
     assert "anim sync-marker compare" in tool_names
@@ -118,6 +125,15 @@ def test_pie_tick_schema_exposes_timeout_parameter():
     assert "timeout" not in tool["parameters"].get("required", [])
 
 
+def test_exec_console_command_schema_distinguishes_pie_instance_and_local_player():
+    tools = {t["name"]: t for t in extract_tools()}
+    properties = tools["exec-console-command"]["parameters"]["properties"]
+
+    assert properties["pie_instance"]["type"] == "integer"
+    assert "FWorldContext::PIEInstance" in properties["pie_instance"]["description"]
+    assert "local player controller" in properties["player_index"]["description"].lower()
+
+
 def test_call_function_mcp_schema_matches_bridge_contract():
     tools = {t["name"]: t for t in extract_tools()}
     params = tools["call-function"]["parameters"]
@@ -152,6 +168,10 @@ def test_commands_is_client_side_tool():
     assert "commands" in CLIENT_SIDE_COMMANDS
 
 
+def test_mcp_surface_status_is_client_side_tool():
+    assert "mcp-surface-status" in CLIENT_SIDE_COMMANDS
+
+
 def test_nested_umg_family_root_is_not_auto_exposed_to_mcp():
     assert "umg" in EXCLUDED_COMMANDS
 
@@ -161,7 +181,7 @@ def test_nested_capture_family_root_is_not_auto_exposed_to_mcp():
 
 
 def test_nested_taxonomy_family_roots_are_not_auto_exposed_to_mcp():
-    for family in ["mutable", "statetree", "anim", "asset", "blueprint"]:
+    for family in ["mutable", "statetree", "anim", "asset", "blueprint", "runtime", "cloth"]:
         assert family in EXCLUDED_COMMANDS
 
 
@@ -176,6 +196,10 @@ def test_canonical_leaf_commands_are_exposed_to_mcp():
         "anim rewind status",
         "asset query",
         "blueprint node add",
+        "cloth query",
+        "cloth apply-weightmap",
+        "cloth weld",
+        "cloth chaos-set-weightmap",
     ]:
         assert name in tool_names
 
@@ -241,6 +265,7 @@ def test_customizable_object_edit_schema_uses_native_json_types():
     layout_params = set_layout_blocks["parameters"]["properties"]
     assert layout_params["grid_size"]["type"] == "array"
     assert layout_params["blocks"]["type"] == "array"
+    assert layout_params["parent_material_node"]["type"] == "string"
     assert layout_params["lod_index"]["type"] == "integer"
     assert layout_params["section_index"]["type"] == "integer"
     assert layout_params["uv_channel"]["type"] == "integer"
@@ -426,6 +451,57 @@ def test_run_python_script_schema_exposes_unsafe_python_call_override():
     params = tool["parameters"]
 
     assert params["properties"]["allow_unsafe_python_calls"]["type"] == "boolean"
+    assert params["properties"]["script_args"]["type"] == "array"
+
+
+def test_cloth_chaos_set_weightmap_schema_uses_native_json_selection_types():
+    tools = extract_tools()
+    tool = next(t for t in tools if t["name"] == "cloth chaos-set-weightmap")
+    params = tool["parameters"]
+
+    assert params["properties"]["vertices"]["type"] == "array"
+    assert params["properties"]["center"]["type"] == "array"
+    assert params["properties"]["value"]["type"] == "number"
+
+
+def test_cloth_weld_schema_uses_native_json_center_type():
+    tools = extract_tools()
+    tool = next(t for t in tools if t["name"] == "cloth weld")
+    params = tool["parameters"]
+
+    assert params["properties"]["center"]["type"] == "array"
+    assert params["properties"]["tolerance"]["type"] == "number"
+
+
+def test_cloth_apply_weightmap_schema_uses_native_json_center_type():
+    tools = extract_tools()
+    tool = next(t for t in tools if t["name"] == "cloth apply-weightmap")
+    params = tool["parameters"]
+
+    assert params["properties"]["target"]["enum"] == [
+        "max-distance",
+        "anim-drive-stiffness",
+        "anim-drive-damping",
+        "backstop-distance",
+        "backstop-radius",
+        "tether-ends-mask",
+        "tether-stiffness",
+        "tether-scale",
+        "drag",
+        "lift",
+        "edge-stiffness",
+        "bending-stiffness",
+        "area-stiffness",
+        "buckling-stiffness",
+        "pressure",
+        "flatness-ratio",
+        "outer-drag",
+        "outer-lift",
+    ]
+    assert params["properties"]["section_indices"]["type"] == "array"
+    assert params["properties"]["center"]["type"] == "array"
+    assert params["properties"]["min_value"]["type"] == "number"
+    assert params["properties"]["max_value"]["type"] == "number"
 
 
 def test_pie_session_schema_exposes_blueprint_compile_error_policy():
@@ -502,7 +578,7 @@ def test_tool_count_is_reasonable():
     """Should have a stable, non-trivial tool count after exclusions."""
     tools = extract_tools()
     assert len(tools) >= 60
-    assert len(tools) <= 229
+    assert len(tools) <= 260
 
 
 def test_skeletal_socket_tools_are_exposed():
@@ -534,3 +610,28 @@ def test_parser_mcp_serve():
     args = parser.parse_args(["mcp-serve"])
     assert args.command == "mcp-serve"
 
+
+def test_session_leaves_become_separate_mcp_tools():
+    names = {tool["name"] for tool in extract_tools()}
+
+    assert "session announce" in names
+    assert "session list" in names
+    assert "session ask" in names
+    assert "session" not in names
+
+
+def test_session_leaf_descriptions_are_not_the_bare_prog():
+    """Every session leaf needs a real `description=`, not the argparse fallback.
+
+    `_iter_nested_leaf_commands` falls back to `parser.prog` for a nested leaf with
+    no description, and never consults `help=`. A model choosing between these tools
+    would see only the string 'soft-ue-cli session leave'.
+    """
+    leaves = [t for t in extract_tools() if t["name"].startswith("session ")]
+    assert len(leaves) == 7
+
+    for tool in leaves:
+        description = tool.get("description") or ""
+        prog = f"soft-ue-cli {tool['name']}"
+        assert description.strip() != prog, f"{tool['name']} description is its prog"
+        assert len(description) > len(prog), f"{tool['name']} description too thin"

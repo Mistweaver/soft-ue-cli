@@ -1,7 +1,9 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/Write/SetNodePropertyTool.h"
+#include "Utils/BridgeAnimNodeProperties.h"
 #include "Utils/BridgeAssetModifier.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 #include "Utils/BridgePropertySerializer.h"
 #include "SoftUEBridgeEditorModule.h"
 #include "Engine/Blueprint.h"
@@ -10,6 +12,7 @@
 #include "K2Node_CallFunction.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "ScopedTransaction.h"
+#include "StructUtils/InstancedStruct.h"
 
 namespace
 {
@@ -78,22 +81,20 @@ namespace
 			return false;
 		}
 
-		FStructProperty* InnerNodeProp = CastField<FStructProperty>(Object->GetClass()->FindPropertyByName(TEXT("Node")));
-		void* InnerNodeContainer = InnerNodeProp ? InnerNodeProp->ContainerPtrToValuePtr<void>(Object) : nullptr;
-		UScriptStruct* InnerNodeStruct = InnerNodeProp ? InnerNodeProp->Struct : nullptr;
-		if (!InnerNodeStruct || !InnerNodeContainer)
+		const FBridgeInnerAnimNode InnerNode = FBridgeAnimNodeProperties::FindInnerAnimNode(Object);
+		if (!InnerNode.IsValid())
 		{
 			return false;
 		}
 
-		FProperty* Property = InnerNodeStruct->FindPropertyByName(PropertyName);
+		FProperty* Property = InnerNode.Struct->FindPropertyByName(PropertyName);
 		if (!Property)
 		{
 			return false;
 		}
 
 		FString SetError;
-		if (!FBridgePropertySerializer::DeserializePropertyValue(Property, InnerNodeContainer, Value, SetError))
+		if (!FBridgePropertySerializer::DeserializePropertyValue(Property, InnerNode.Container, Value, SetError))
 		{
 			Errors.Add(FString::Printf(TEXT("Failed to sync inner Node.%s: %s"), PropertyName, *SetError));
 			return false;
@@ -187,7 +188,8 @@ namespace
 FString USetNodePropertyTool::GetToolDescription() const
 {
 	return TEXT("Set properties on a graph node by GUID. Supports UPROPERTY members, "
-		"inner anim node struct properties (e.g. SpringBone.BoneName), and pin defaults (e.g. Alpha). "
+		"inner anim node struct properties, nested struct paths, struct-array element paths "
+		"(e.g. SpringBone.BoneName, Node.Input.Bones[0].BoneName), and pin defaults (e.g. Alpha). "
 		"Use query-blueprint-graph to find node GUIDs.");
 }
 
@@ -209,7 +211,7 @@ TMap<FString, FBridgeSchemaProperty> USetNodePropertyTool::GetInputSchema() cons
 
 	FBridgeSchemaProperty Properties;
 	Properties.Type = TEXT("object");
-	Properties.Description = TEXT("Properties to set as JSON object (e.g. {\"SpringStiffness\": 450, \"Alpha\": 0.08})");
+	Properties.Description = TEXT("Properties to set as JSON object (e.g. {\"SpringStiffness\": 450, \"Alpha\": 0.08, \"Node.Input.Bones[0].BoneName\": \"pelvis\"})");
 	Properties.bRequired = true;
 	Schema.Add(TEXT("properties"), Properties);
 
@@ -310,14 +312,13 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 		return Errors;
 	}
 
-	// Inner "Node" struct for anim graph nodes (FAnimNode_*)
-	FStructProperty* InnerNodeProp = CastField<FStructProperty>(Node->GetClass()->FindPropertyByName(TEXT("Node")));
-	void* InnerNodeContainer = InnerNodeProp ? InnerNodeProp->ContainerPtrToValuePtr<void>(Node) : nullptr;
-	UScriptStruct* InnerNodeStruct = InnerNodeProp ? InnerNodeProp->Struct : nullptr;
+	// Property names that resolved to neither a UPROPERTY path nor the inner anim node struct.
+	// Tracked separately from Errors so the pin fallback below never has to parse message text.
+	TArray<FString> Unresolved;
 
 	for (const auto& Pair : Properties->Values)
 	{
-		const FString PropertyName(*Pair.Key);
+		const FString PropertyName = SoftUE::JsonObjectUtils::KeyToString(Pair.Key);
 		const TSharedPtr<FJsonValue>& Value = Pair.Value;
 
 		if (ApplyCallFunctionReferenceStringShortcut(Cast<UEdGraphNode>(Node), Blueprint, PropertyName, Value, Errors))
@@ -331,34 +332,16 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 		if (!Property)
 		{
 			FString FindError;
-			if (!FBridgeAssetModifier::FindPropertyByPath(Node, PropertyName, Property, Container, FindError))
+			if (!FBridgeAssetModifier::FindPropertyByPath(Node, PropertyName, Property, Container, FindError) &&
+				!FBridgeAnimNodeProperties::ResolveInnerAnimNodePropertyPath(Node, PropertyName, Property, Container, FindError))
 			{
-				if (InnerNodeStruct && InnerNodeContainer)
+				if (SyncAnimGraphCacheName(Node, PropertyName, Value, Errors))
 				{
-					Property = InnerNodeStruct->FindPropertyByName(*PropertyName);
-					if (Property)
-					{
-						Container = InnerNodeContainer;
-					}
-					else
-					{
-						FString InnerPath = FString::Printf(TEXT("Node.%s"), *PropertyName);
-						FBridgeAssetModifier::FindPropertyByPath(Node, InnerPath, Property, Container, FindError);
-					}
-				}
-
-				if (!Property)
-				{
-					if (SyncAnimGraphCacheName(Node, PropertyName, Value, Errors))
-					{
-						continue;
-					}
-
-					FString Msg = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
-					UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
-					Errors.Add(Msg);
 					continue;
 				}
+
+				Unresolved.Add(PropertyName);
+				continue;
 			}
 		}
 
@@ -379,53 +362,65 @@ TArray<FString> USetNodePropertyTool::ApplyProperties(UBlueprint* Blueprint, UOb
 	// Anim graph nodes expose some values (Alpha, BlendWeight, etc.) as pins
 	// with DefaultValue strings, not as UPROPERTY members.
 	UEdGraphNode* GraphNode = Cast<UEdGraphNode>(Node);
+	TArray<FString> PinNames;
 	if (GraphNode)
 	{
-		TArray<FString> ResolvedByPin;
-		for (const FString& ErrMsg : Errors)
+		for (UEdGraphPin* Pin : GraphNode->Pins)
 		{
-			if (!ErrMsg.StartsWith(TEXT("Property not found: ")))
+			if (FBridgeAnimNodeProperties::IsSettableGraphPin(Pin))
+			{
+				PinNames.Add(Pin->PinName.ToString());
+			}
+		}
+
+		for (int32 Index = Unresolved.Num() - 1; Index >= 0; --Index)
+		{
+			const FString PropName = Unresolved[Index];
+			if (PropName.IsEmpty())
 			{
 				continue;
 			}
-			FString PropName = ErrMsg.RightChop(20);
-			if (PropName.IsEmpty()) continue;
 
 			for (UEdGraphPin* Pin : GraphNode->Pins)
 			{
-				if (Pin && Pin->PinName.ToString() == PropName)
+				if (!FBridgeAnimNodeProperties::IsSettableGraphPin(Pin) || Pin->PinName.ToString() != PropName)
 				{
-					TSharedPtr<FJsonValue> ValuePtr = Properties->TryGetField(PropName);
-					if (ValuePtr.IsValid())
-					{
-						FString StringValue;
-						if (ValuePtr->Type == EJson::Number)
-						{
-							StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
-						}
-						else if (ValuePtr->Type == EJson::Boolean)
-						{
-							StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
-						}
-						else
-						{
-							StringValue = ValuePtr->AsString();
-						}
-
-						Pin->DefaultValue = StringValue;
-						ResolvedByPin.Add(PropName);
-						UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
-					}
-					break;
+					continue;
 				}
+
+				const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropName);
+				if (ValuePtr.IsValid())
+				{
+					FString StringValue;
+					if (ValuePtr->Type == EJson::Number)
+					{
+						StringValue = FString::Printf(TEXT("%g"), ValuePtr->AsNumber());
+					}
+					else if (ValuePtr->Type == EJson::Boolean)
+					{
+						StringValue = ValuePtr->AsBool() ? TEXT("true") : TEXT("false");
+					}
+					else
+					{
+						StringValue = ValuePtr->AsString();
+					}
+
+					Pin->DefaultValue = StringValue;
+					Unresolved.RemoveAt(Index);
+					UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Set pin default %s = %s"), *PropName, *StringValue);
+				}
+				break;
 			}
 		}
+	}
 
-		for (const FString& Resolved : ResolvedByPin)
-		{
-			FString ErrToRemove = FString::Printf(TEXT("Property not found: %s"), *Resolved);
-			Errors.Remove(ErrToRemove);
-		}
+	// Whatever is still unresolved is reported with the node class, the inner anim node
+	// struct that was actually searched, and the fields available on it.
+	for (const FString& PropName : Unresolved)
+	{
+		const FString Msg = FBridgeAnimNodeProperties::DescribeUnresolvedProperty(Node, PropName, PinNames);
+		UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("%s"), *Msg);
+		Errors.Add(Msg);
 	}
 
 	return Errors;

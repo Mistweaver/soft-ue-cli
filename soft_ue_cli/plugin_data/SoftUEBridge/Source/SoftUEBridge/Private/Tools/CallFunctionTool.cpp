@@ -8,6 +8,7 @@
 #include "SoftUEBridgeModule.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 
 // ------------------------------------------------------------
 // Type marshaling - supported input/output types
@@ -223,7 +224,7 @@ namespace
 
 			if (FuncArgs.IsValid())
 			{
-				TSharedPtr<FJsonValue> ArgValue = FuncArgs->TryGetField(Prop->GetName());
+				const TSharedPtr<FJsonValue> ArgValue = SoftUE::JsonObjectUtils::FindField(FuncArgs, Prop->GetName());
 				if (ArgValue.IsValid())
 				{
 					FString ImportText;

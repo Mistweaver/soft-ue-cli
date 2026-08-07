@@ -3,6 +3,7 @@
 #include "Tools/Asset/AssetReferenceRepointUtils.h"
 
 #include "Utils/BridgeAssetModifier.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 
 #include "Misc/PackageName.h"
 #include "StructUtils/InstancedStruct.h"
@@ -412,7 +413,7 @@ bool LoadReplacementMap(
 	OutReplacementMap.ReplacementPaths = MakeShared<FJsonObject>();
 	for (const auto& Pair : (*ReplacementObject)->Values)
 	{
-		const FString OldPath = FString(*Pair.Key).TrimStartAndEnd();
+		const FString OldPath = SoftUE::JsonObjectUtils::KeyToString(Pair.Key).TrimStartAndEnd();
 		const FString NewPath = Pair.Value.IsValid() ? Pair.Value->AsString().TrimStartAndEnd() : TEXT("");
 		if (OldPath.IsEmpty() || NewPath.IsEmpty())
 		{

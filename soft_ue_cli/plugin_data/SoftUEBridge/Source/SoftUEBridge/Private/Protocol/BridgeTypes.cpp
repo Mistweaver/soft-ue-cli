@@ -6,6 +6,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 
 // ── EBridgeMethod parse helper ───────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ TOptional<FBridgeRequest> FBridgeRequest::FromJsonString(const FString& JsonStri
 	Root->TryGetStringField(TEXT("jsonrpc"), Req.JsonRpc);
 
 	// ID can be string or number; store as string
-	TSharedPtr<FJsonValue> IdField = Root->TryGetField(TEXT("id"));
+	const TSharedPtr<FJsonValue> IdField = SoftUE::JsonObjectUtils::FindField(Root, TEXT("id"));
 	if (IdField.IsValid())
 	{
 		if (IdField->Type == EJson::String)

@@ -20,6 +20,10 @@ class SOFTUEBRIDGEEDITOR_API URunPythonScriptTool : public UBridgeToolBase
 public:
 	virtual FString GetToolName() const override { return TEXT("run-python-script"); }
 	virtual FString GetToolDescription() const override;
+	virtual EBridgeToolExecutionContext GetExecutionContextRequirement() const override
+	{
+		return EBridgeToolExecutionContext::SlateTicker;
+	}
 	virtual TMap<FString, FBridgeSchemaProperty> GetInputSchema() const override;
 	virtual TArray<FString> GetRequiredParams() const override { return {}; } // Either script or script_path required
 	virtual FBridgeToolResult Execute(
@@ -43,7 +47,8 @@ private:
 	FString BuildPythonPreamble(
 		const TSharedPtr<FJsonObject>& Arguments,
 		const TArray<FString>& PythonPaths,
-		const FString& WorldType);
+		const FString& WorldType,
+		const FString& ScriptArgv0);
 
 	bool ContainsUnsafeLevelLoad(const FString& Script) const;
 	bool ContainsUnsafeNativeCall(const FString& Script, FString& OutReason) const;

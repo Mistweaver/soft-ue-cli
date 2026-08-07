@@ -49,9 +49,12 @@ EXCLUDED_COMMANDS: frozenset[str] = frozenset({
     "asset",
     "blueprint",
     "capture",
+    "cloth",
     "umg",
     "metasound",
     "mutable",
+    "runtime",
+    "session",
     "skills",
     "mcp-serve",
     "statetree",
@@ -62,6 +65,7 @@ EXCLUDED_COMMANDS: frozenset[str] = frozenset({
 CLIENT_SIDE_COMMANDS: frozenset[str] = frozenset({
     "status",
     "commands",
+    "mcp-surface-status",
     "wait-for-ready",
     "check-setup",
     "setup",
@@ -83,6 +87,11 @@ CLIENT_SIDE_COMMANDS: frozenset[str] = frozenset({
 #   "required_add": list of field names to require in MCP.
 #   "properties_remove": list of argparse-only fields to hide from MCP.
 TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
+    "find-references": {
+        "properties": {
+            "limit": {"type": "integer", "minimum": 1},
+        },
+    },
     # spawn-actor: location/rotation are X,Y,Z arrays in MCP (not comma strings)
     "spawn-actor": {
         "properties": {
@@ -128,11 +137,43 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
         "properties_remove": ["calls_file"],
         "required_add": ["calls"],
     },
+    "cloth chaos-set-weightmap": {
+        "properties": {
+            "vertices": {"type": "array", "description": "Array of simulation 3D vertex indices"},
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial selection"},
+        },
+    },
+    "cloth apply-weightmap": {
+        "properties": {
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
+            "section_indices": {"type": "array", "description": "Merged source SkeletalMesh section indices whose vertices may be updated"},
+        },
+        "properties_remove": ["section_index"],
+    },
+    "cloth weld": {
+        "properties": {
+            "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
+        },
+    },
+    # run-python-script: script_args is a native JSON array in MCP, forwarded to sys.argv[1:].
+    "run-python-script": {
+        "properties": {
+            "script_args": {"type": "array", "description": "Array of string arguments exposed as sys.argv[1:]"},
+        },
+    },
     # exec-console-command: MCP callers may pass a complete command string while
     # argparse exposes the legacy command_parts positional.
     "exec-console-command": {
         "properties": {
             "command": {"type": "string", "description": "Console command to execute"},
+            "pie_instance": {
+                "type": "integer",
+                "description": "FWorldContext::PIEInstance identifying the PIE world; valid only with world=pie",
+            },
+            "player_index": {
+                "type": "integer",
+                "description": "Optional local player controller index inside the selected PIE/game world",
+            },
         },
         "properties_remove": ["command_parts"],
         "required_remove": ["command_parts"],
@@ -199,6 +240,10 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
             "grid_size": {"type": "array", "description": "[X, Y] layout grid size"},
             "max_grid_size": {"type": "array", "description": "Optional [X, Y] max layout grid size"},
             "blocks": {"type": "array", "description": "Layout blocks with min plus max or size"},
+            "parent_material_node": {
+                "type": "string",
+                "description": "Parent material node reference; adds its Mutable internal tag to ModifierRemoveMeshBlocks RequiredTags",
+            },
             "lod_index": {"type": "integer", "description": "Source mesh LOD index for mesh pin UV layouts"},
             "section_index": {"type": "integer", "description": "Source mesh section/material index for mesh pin UV layouts"},
             "uv_channel": {"type": "integer", "description": "Source mesh UV channel for mesh pin layouts"},
