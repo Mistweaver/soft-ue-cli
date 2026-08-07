@@ -3061,6 +3061,14 @@ def cmd_insights_analyze(args: argparse.Namespace) -> None:
     arguments: dict = {"trace_file": args.trace_file}
     if args.analysis_type:
         arguments["analysis_type"] = args.analysis_type
+    if args.top_n is not None:
+        arguments["top_n"] = args.top_n
+    if args.start_time is not None:
+        arguments["start_time"] = args.start_time
+    if args.end_time is not None:
+        arguments["end_time"] = args.end_time
+    if args.hitch_threshold_ms is not None:
+        arguments["hitch_threshold_ms"] = args.hitch_threshold_ms
     _print_json(_run_tool("insights-analyze", arguments))
 
 
@@ -7617,16 +7625,62 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         "insights-analyze",
         help="Analyze an Unreal Insights trace file.",
         description=(
-            "Parses a .utrace file and returns a structured summary.\n"
+            "Parses a .utrace file with the Unreal Insights TraceServices providers\n"
+            "and returns a structured summary.\n"
             "Use insights-list-traces to find available trace files.\n\n"
+            "ANALYSIS TYPES:\n"
+            "  basic_info     File metadata only; does not parse the trace (fast).\n"
+            "  frame_stats    Frame timing distribution (avg/median/p90/p95/p99) and hitches.\n"
+            "  top_functions  Aggregated CPU/GPU timers ranked by cost.\n"
+            "  counters       Trace counters/stats with min/max/average.\n"
+            "  threads        Threads present in the trace.\n"
+            "  bottlenecks    Composite: frame health, worst frames, heaviest timers.\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli insights-analyze MyTrace.utrace\n"
-            "  soft-ue-cli insights-analyze D:/Traces/MyTrace.utrace --analysis-type basic_info"
+            "  soft-ue-cli insights-analyze MyTrace.utrace --analysis-type bottlenecks\n"
+            "  soft-ue-cli insights-analyze MyTrace.utrace --analysis-type top_functions --top-n 50\n"
+            "  soft-ue-cli insights-analyze MyTrace.utrace --analysis-type frame_stats \\\n"
+            "      --start-time 10 --end-time 20 --hitch-threshold-ms 16.7"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_ia.add_argument("trace_file", help="Path to .utrace file")
-    p_ia.add_argument("--analysis-type", choices=["basic_info"], help="Analysis type (default: basic_info)")
+    p_ia.add_argument(
+        "--analysis-type",
+        choices=[
+            "basic_info",
+            "frame_stats",
+            "top_functions",
+            "counters",
+            "threads",
+            "bottlenecks",
+        ],
+        help="Analysis type (default: basic_info)",
+    )
+    p_ia.add_argument(
+        "--top-n",
+        type=int,
+        metavar="N",
+        help="Max rows for top_functions/counters/bottlenecks (default: 20, max: 500)",
+    )
+    p_ia.add_argument(
+        "--start-time",
+        type=float,
+        metavar="SEC",
+        help="Window start time in seconds from trace start (default: 0)",
+    )
+    p_ia.add_argument(
+        "--end-time",
+        type=float,
+        metavar="SEC",
+        help="Window end time in seconds (default: end of trace)",
+    )
+    p_ia.add_argument(
+        "--hitch-threshold-ms",
+        type=float,
+        metavar="MS",
+        help="Frame time in ms above which a frame counts as a hitch (default: 33.4)",
+    )
     p_ia.set_defaults(func=cmd_insights_analyze)
 
     # -------------------------------------------------------------------------
