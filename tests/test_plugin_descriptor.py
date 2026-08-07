@@ -1785,3 +1785,97 @@ def test_trigger_input_routes_keys_through_player_controller_and_enhanced_input(
     assert "FindEnhancedInputAction" in source
     assert '"EnhancedInput"' in build_cs
     assert '"Name": "EnhancedInput"' in descriptor
+
+
+def test_insights_analyze_reads_traces_through_trace_services_providers():
+    source = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Performance/InsightsAnalyzeTool.cpp"
+    ).read_text(encoding="utf-8")
+    header = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Public/Tools/Performance/InsightsAnalyzeTool.h"
+    ).read_text(encoding="utf-8")
+    build_cs = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/SoftUEBridgeEditor.Build.cs"
+    ).read_text(encoding="utf-8")
+
+    assert '"TraceServices"' in build_cs
+    assert '"TraceAnalysis"' in build_cs
+
+    # The trace must actually be parsed, not just stat()-ed as it was before.
+    assert "ITraceServicesModule" in source
+    assert "GetAnalysisService" in source
+    assert "AnalysisService->Analyze" in source
+    # Every provider read has to happen under the session read lock.
+    assert "FAnalysisSessionReadScope" in source
+
+    # One provider per analysis type.
+    assert "ReadFrameProvider" in source
+    assert "ReadTimingProfilerProvider" in source
+    assert "ReadCounterProvider" in source
+    assert "ReadThreadProvider" in source
+    assert "CreateAggregation" in source
+
+    for analysis_type in (
+        "basic_info",
+        "frame_stats",
+        "top_functions",
+        "counters",
+        "threads",
+        "bottlenecks",
+    ):
+        assert f'TEXT("{analysis_type}")' in source
+
+    # Aggregation must span every CPU thread and GPU queue, not a filtered subset.
+    assert "Params.CpuThreadFilter" in source
+    assert "Params.GpuQueueFilter" in source
+
+    # Reporting both orderings is what makes the bottleneck report actionable:
+    # self time localises the cost, inclusive time shows the expensive call tree.
+    assert "top_timers_by_inclusive_time" in source
+    assert "top_timers_by_self_time" in source
+
+    # Percentiles matter more than averages for hitch hunting.
+    for field in ("median_ms", "p90_ms", "p95_ms", "p99_ms", "hitch_count"):
+        assert field in source
+
+    assert "FInsightsAnalysisWindow" in header
+
+
+def test_insights_analyze_cli_exposes_every_analysis_type():
+    from soft_ue_cli.__main__ import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "insights-analyze",
+            "T.utrace",
+            "--analysis-type",
+            "bottlenecks",
+            "--top-n",
+            "50",
+            "--start-time",
+            "10",
+            "--end-time",
+            "20",
+            "--hitch-threshold-ms",
+            "16.7",
+        ]
+    )
+
+    assert args.trace_file == "T.utrace"
+    assert args.analysis_type == "bottlenecks"
+    assert args.top_n == 50
+    assert args.start_time == 10.0
+    assert args.end_time == 20.0
+    assert args.hitch_threshold_ms == 16.7
+
+    for analysis_type in (
+        "basic_info",
+        "frame_stats",
+        "top_functions",
+        "counters",
+        "threads",
+        "bottlenecks",
+    ):
+        parsed = parser.parse_args(["insights-analyze", "T.utrace", "--analysis-type", analysis_type])
+        assert parsed.analysis_type == analysis_type
