@@ -1,6 +1,7 @@
 // Copyright softdaddy-o 2024. All Rights Reserved.
 
 #include "Tools/References/FindReferencesTool.h"
+#include "Tools/References/BridgeFiBCompleteness.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/Blueprint.h"
@@ -113,6 +114,10 @@ FBridgeToolResult UFindReferencesTool::Execute(
 
 	int32 Limit = GetIntArgOrDefault(Arguments, TEXT("limit"), 100);
 	FString SearchFilter = GetStringArgOrDefault(Arguments, TEXT("search"), TEXT(""));
+	if (Limit <= 0)
+	{
+		return FBridgeToolResult::Error(TEXT("Parameter 'limit' must be a positive integer"));
+	}
 
 	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("find-references: type='%s', path='%s', limit=%d, search='%s'"),
 		*Type, *AssetPath, Limit, *SearchFilter);
@@ -394,6 +399,7 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 	bool bCacheInProgress = SearchManager.IsCacheInProgress();
 	bool bDiscoveryInProgress = SearchManager.IsAssetDiscoveryInProgress();
 	int32 UnindexedCount = SearchManager.GetNumberUnindexedAssets();
+	int32 FailedToCacheCount = SearchManager.GetFailedToCacheCount();
 
 	// Build the search term for FiB
 	FString SearchTerm;
@@ -413,11 +419,14 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 	// Only use FiB cache if indexing is complete
 	TArray<FSoftObjectPath> FiBMatches;
 	bool bUsedFiBCache = false;
-	if (!bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0)
+	if (!bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0 && FailedToCacheCount == 0)
 	{
 		FiBMatches = FindMatchingBlueprintsViaFiB(SearchTerm, AssetPath);
 		bUsedFiBCache = FiBMatches.Num() > 0;
 	}
+	const BridgeFiBCompleteness::ESearchMode SearchMode = bUsedFiBCache
+		? BridgeFiBCompleteness::ESearchMode::FiBCache
+		: BridgeFiBCompleteness::ESearchMode::FullFallback;
 
 	// Build result
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
@@ -430,7 +439,9 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 	CacheStatusObj->SetBoolField(TEXT("cache_in_progress"), bCacheInProgress);
 	CacheStatusObj->SetBoolField(TEXT("discovery_in_progress"), bDiscoveryInProgress);
 	CacheStatusObj->SetNumberField(TEXT("unindexed_count"), UnindexedCount);
-	CacheStatusObj->SetBoolField(TEXT("cache_ready"), !bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0);
+	CacheStatusObj->SetNumberField(TEXT("failed_to_cache_count"), FailedToCacheCount);
+	CacheStatusObj->SetBoolField(TEXT("cache_ready"),
+		!bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0 && FailedToCacheCount == 0);
 	Result->SetObjectField(TEXT("fib_cache_status"), CacheStatusObj);
 
 	// Add search criteria
@@ -450,6 +461,9 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 
 	// Determine which blueprints to search
 	TArray<FAssetData> BlueprintsToSearch;
+	const bool bDiscoveryInProgressAtSelection = SearchManager.IsAssetDiscoveryInProgress();
+	CacheStatusObj->SetBoolField(
+		TEXT("discovery_in_progress_at_selection"), bDiscoveryInProgressAtSelection);
 
 	if (bUsedFiBCache)
 	{
@@ -572,10 +586,41 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 		}
 	}
 
+	// Refresh FiB state after traversal so the final decision and diagnostics do not use a stale snapshot.
+	bCacheInProgress = SearchManager.IsCacheInProgress();
+	bDiscoveryInProgress = SearchManager.IsAssetDiscoveryInProgress();
+	UnindexedCount = SearchManager.GetNumberUnindexedAssets();
+	FailedToCacheCount = SearchManager.GetFailedToCacheCount();
+	CacheStatusObj->SetBoolField(TEXT("cache_in_progress"), bCacheInProgress);
+	CacheStatusObj->SetBoolField(TEXT("discovery_in_progress"), bDiscoveryInProgress);
+	CacheStatusObj->SetNumberField(TEXT("unindexed_count"), UnindexedCount);
+	CacheStatusObj->SetNumberField(TEXT("failed_to_cache_count"), FailedToCacheCount);
+	CacheStatusObj->SetBoolField(TEXT("cache_ready"),
+		!bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0 && FailedToCacheCount == 0);
+
 	Result->SetArrayField(TEXT("usages"), UsagesArray);
 	Result->SetNumberField(TEXT("count"), UsagesArray.Num());
 	Result->SetNumberField(TEXT("blueprints_searched"), BlueprintsSearched);
-	Result->SetBoolField(TEXT("truncated"), UsagesArray.Num() >= Limit);
+	const bool bResultTruncated = UsagesArray.Num() >= Limit;
+	Result->SetBoolField(TEXT("truncated"), bResultTruncated);
+
+	const BridgeFiBCompleteness::FState CompletenessState{
+		bCacheInProgress,
+		bDiscoveryInProgress,
+		UnindexedCount,
+		FailedToCacheCount,
+		SearchMode,
+		BlueprintsToSearch.Num(),
+		BlueprintsSearched,
+		bResultTruncated,
+		bDiscoveryInProgressAtSelection};
+	const BridgeFiBCompleteness::FResult Completeness =
+		BridgeFiBCompleteness::Evaluate(CompletenessState);
+	if (!Completeness.bComplete)
+	{
+		return FBridgeToolResult::Error(Completeness.ErrorMessage);
+	}
+	Result->SetBoolField(TEXT("result_complete"), true);
 
 	return FBridgeToolResult::Json(Result);
 }

@@ -17,6 +17,7 @@
 #include "UObject/StructOnScope.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UnrealType.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 
 namespace
 {
@@ -966,8 +967,8 @@ namespace
 
 		for (const TCHAR* FieldName : FieldNames)
 		{
-			TSharedPtr<FJsonValue> FieldValue = Object->TryGetField(FieldName);
-			if (!FieldValue)
+			const TSharedPtr<FJsonValue> FieldValue = SoftUE::JsonObjectUtils::FindField(Object, FieldName);
+			if (!FieldValue.IsValid())
 			{
 				continue;
 			}
@@ -1296,8 +1297,9 @@ TSharedPtr<FJsonObject> MutableIntrospectionUtils::BuildMutableDiagnosticsResult
 		: MakeShared<FJsonObject>();
 	for (const auto& Pair : AssetSignals->Values)
 	{
+		const FString PropertyName = SoftUE::JsonObjectUtils::KeyToString(Pair.Key);
 		TSharedPtr<FJsonObject> SignalJson = MakeShared<FJsonObject>();
-		SignalJson->SetStringField(TEXT("property"), *Pair.Key);
+		SignalJson->SetStringField(TEXT("property"), PropertyName);
 		SignalJson->SetStringField(TEXT("value"), JsonValueToFlatString(Pair.Value));
 		SignalJson->SetStringField(TEXT("owner"), Context.bAssetLoaded ? Context.AssetObject->GetPathName() : Context.AssetPath);
 		Signals.Add(MakeShared<FJsonValueObject>(SignalJson));
@@ -1319,7 +1321,8 @@ TSharedPtr<FJsonObject> MutableIntrospectionUtils::BuildMutableDiagnosticsResult
 			: MakeCapability(TEXT("unknown"), TEXT("No projector support signal could be derived without Mutable-specific runtime APIs.")));
 	Capabilities->SetObjectField(
 		TEXT("clothing_enablement"),
-		AssetSignals->HasField(TEXT("Cloth")) || AssetSignals->HasField(TEXT("Clothing"))
+		SoftUE::JsonObjectUtils::HasField(AssetSignals, TEXT("Cloth")) ||
+			SoftUE::JsonObjectUtils::HasField(AssetSignals, TEXT("Clothing"))
 			? MakeCapability(TEXT("detected"), TEXT("Found cloth-related reflected properties on the asset."))
 			: MakeCapability(TEXT("unknown"), TEXT("No cloth-related reflected properties were detected.")));
 	Capabilities->SetObjectField(

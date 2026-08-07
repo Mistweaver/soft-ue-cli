@@ -15,6 +15,7 @@
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "Utils/BridgeAssetModifier.h"
+#include "Utils/BridgeJsonObjectUtils.h"
 #include "Utils/BridgePropertySerializer.h"
 
 namespace
@@ -188,6 +189,136 @@ namespace
 		return nullptr;
 	}
 
+	struct FCustomizableObjectPinLinkEndpoint
+	{
+		TWeakObjectPtr<UEdGraphNode> Node;
+		FName PinName;
+		EEdGraphPinDirection Direction = EGPD_Input;
+	};
+
+	struct FCustomizableObjectPinLinkSnapshot
+	{
+		FName PinName;
+		EEdGraphPinDirection Direction = EGPD_Input;
+		TArray<FCustomizableObjectPinLinkEndpoint> LinkedPins;
+	};
+
+	static UEdGraphPin* FindPinByNameAndDirection(UEdGraphNode* Node, const FName& PinName, EEdGraphPinDirection Direction)
+	{
+		if (!Node)
+		{
+			return nullptr;
+		}
+
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->PinName == PinName && Pin->Direction == Direction)
+			{
+				return Pin;
+			}
+		}
+		return nullptr;
+	}
+
+	static TArray<FCustomizableObjectPinLinkSnapshot> SnapshotCustomizableObjectPinLinks(UEdGraphNode* Node)
+	{
+		TArray<FCustomizableObjectPinLinkSnapshot> Snapshots;
+		if (!Node)
+		{
+			return Snapshots;
+		}
+
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (!Pin || Pin->LinkedTo.Num() == 0)
+			{
+				continue;
+			}
+
+			FCustomizableObjectPinLinkSnapshot Snapshot;
+			Snapshot.PinName = Pin->PinName;
+			Snapshot.Direction = Pin->Direction;
+			for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+			{
+				if (!LinkedPin)
+				{
+					continue;
+				}
+
+				UEdGraphNode* LinkedNode = LinkedPin->GetOwningNode();
+				if (!LinkedNode)
+				{
+					continue;
+				}
+
+				FCustomizableObjectPinLinkEndpoint Endpoint;
+				Endpoint.Node = LinkedNode;
+				Endpoint.PinName = LinkedPin->PinName;
+				Endpoint.Direction = LinkedPin->Direction;
+				Snapshot.LinkedPins.Add(Endpoint);
+			}
+
+			if (Snapshot.LinkedPins.Num() > 0)
+			{
+				Snapshots.Add(Snapshot);
+			}
+		}
+
+		return Snapshots;
+	}
+
+	static int32 RestoreCustomizableObjectPinLinks(
+		UEdGraphNode* Node,
+		const TArray<FCustomizableObjectPinLinkSnapshot>& Snapshots)
+	{
+		if (!Node)
+		{
+			return 0;
+		}
+
+		int32 RestoredCount = 0;
+		for (const FCustomizableObjectPinLinkSnapshot& Snapshot : Snapshots)
+		{
+			UEdGraphPin* Pin = FindPinByNameAndDirection(Node, Snapshot.PinName, Snapshot.Direction);
+			if (!Pin)
+			{
+				continue;
+			}
+
+			for (const FCustomizableObjectPinLinkEndpoint& Endpoint : Snapshot.LinkedPins)
+			{
+				UEdGraphNode* LinkedNode = Endpoint.Node.Get();
+				UEdGraphPin* LinkedPin = FindPinByNameAndDirection(LinkedNode, Endpoint.PinName, Endpoint.Direction);
+				if (!LinkedPin || LinkedPin == Pin)
+				{
+					continue;
+				}
+
+				Pin->LinkedTo.RemoveAll([](UEdGraphPin* ExistingPin)
+				{
+					return ExistingPin == nullptr;
+				});
+				LinkedPin->LinkedTo.RemoveAll([Node](UEdGraphPin* ExistingPin)
+				{
+					return ExistingPin == nullptr || ExistingPin->GetOwningNode() == Node;
+				});
+
+				if (!Pin->LinkedTo.Contains(LinkedPin))
+				{
+					Pin->MakeLinkTo(LinkedPin);
+					++RestoredCount;
+				}
+				else if (!LinkedPin->LinkedTo.Contains(Pin))
+				{
+					LinkedPin->MakeLinkTo(Pin);
+					++RestoredCount;
+				}
+			}
+		}
+
+		return RestoredCount;
+	}
+
 	static bool TryGetAssetPathFromJsonValue(const TSharedPtr<FJsonValue>& Value, FString& OutPath)
 	{
 		if (!Value.IsValid())
@@ -317,13 +448,14 @@ namespace
 		TArray<FString> MissingPropertyNames;
 		for (const auto& Pair : Properties->Values)
 		{
+			const FString PropertyName = SoftUE::JsonObjectUtils::KeyToString(Pair.Key);
 			FProperty* Property = nullptr;
 			void* Container = nullptr;
 			FString FindError;
-			if (!FBridgeAssetModifier::FindPropertyByPath(Node, FString(*Pair.Key), Property, Container, FindError))
+			if (!FBridgeAssetModifier::FindPropertyByPath(Node, PropertyName, Property, Container, FindError))
 			{
-				MissingPropertyNames.Add(FString(*Pair.Key));
-				Errors.Add(FString::Printf(TEXT("Property not found: %s"), *Pair.Key));
+				MissingPropertyNames.Add(PropertyName);
+				Errors.Add(FString::Printf(TEXT("Property not found: %s"), *PropertyName));
 				continue;
 			}
 
@@ -333,7 +465,7 @@ namespace
 			if (!FBridgePropertySerializer::DeserializePropertyValue(Property, Container, Pair.Value, SetError))
 			{
 				Node->PostEditChange();
-				Errors.Add(FString::Printf(TEXT("Failed to set property %s: %s"), *Pair.Key, *SetError));
+				Errors.Add(FString::Printf(TEXT("Failed to set property %s: %s"), *PropertyName, *SetError));
 				continue;
 			}
 
@@ -350,7 +482,7 @@ namespace
 				continue;
 			}
 
-			TSharedPtr<FJsonValue> ValuePtr = Properties->TryGetField(PropertyName);
+			const TSharedPtr<FJsonValue> ValuePtr = SoftUE::JsonObjectUtils::FindField(Properties, PropertyName);
 			if (!ValuePtr.IsValid())
 			{
 				continue;
@@ -468,7 +600,89 @@ namespace
 		int32 LODIndex = 0;
 		int32 SectionIndex = 0;
 		int32 UVChannel = 0;
+		int32 SourceLayoutCount = 0;
 	};
+
+	static int32 GetMutableLayoutArrayCount(UObject* PinData)
+	{
+		if (!PinData)
+		{
+			return 0;
+		}
+
+		FArrayProperty* LayoutsProperty = FindFProperty<FArrayProperty>(PinData->GetClass(), TEXT("Layouts"));
+		if (!LayoutsProperty)
+		{
+			return 0;
+		}
+
+		FScriptArrayHelper LayoutsHelper(LayoutsProperty, LayoutsProperty->ContainerPtrToValuePtr<void>(PinData));
+		return LayoutsHelper.Num();
+	}
+
+	static FString BuildMutableInternalTag(const UEdGraphNode* Node)
+	{
+		return Node
+			? FString::Printf(TEXT("MutableInternalTag_%s"), *Node->NodeGuid.ToString())
+			: FString();
+	}
+
+	static bool AddUniqueStringToReflectedArray(
+		UObject* Object,
+		const TCHAR* PropertyName,
+		const FString& Value,
+		bool& bOutAdded,
+		FString& OutError)
+	{
+		bOutAdded = false;
+		if (!Object || Value.IsEmpty())
+		{
+			OutError = TEXT("Object and value are required");
+			return false;
+		}
+
+		FArrayProperty* ArrayProperty = FindFProperty<FArrayProperty>(Object->GetClass(), FName(PropertyName));
+		FStrProperty* StringProperty = ArrayProperty ? CastField<FStrProperty>(ArrayProperty->Inner) : nullptr;
+		if (!ArrayProperty || !StringProperty)
+		{
+			OutError = FString::Printf(TEXT("Property %s is not a string array"), PropertyName);
+			return false;
+		}
+
+		void* ArrayPtr = ArrayProperty->ContainerPtrToValuePtr<void>(Object);
+		FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayPtr);
+		for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+		{
+			if (StringProperty->GetPropertyValue(ArrayHelper.GetRawPtr(Index)) == Value)
+			{
+				return true;
+			}
+		}
+
+		Object->PreEditChange(ArrayProperty);
+		const int32 NewIndex = ArrayHelper.AddValue();
+		StringProperty->SetPropertyValue(ArrayHelper.GetRawPtr(NewIndex), Value);
+		FPropertyChangedEvent ChangeEvent(ArrayProperty);
+		Object->PostEditChangeProperty(ChangeEvent);
+		bOutAdded = true;
+		return true;
+	}
+
+	static bool AddMutableRequiredTagForParentMaterial(
+		UEdGraphNode* ModifierNode,
+		UEdGraphNode* ParentMaterialNode,
+		FString& OutInternalTag,
+		bool& bOutAdded,
+		FString& OutError)
+	{
+		OutInternalTag = BuildMutableInternalTag(ParentMaterialNode);
+		return AddUniqueStringToReflectedArray(
+			ModifierNode,
+			TEXT("RequiredTags"),
+			OutInternalTag,
+			bOutAdded,
+			OutError);
+	}
 
 	static UObject* GetPinDataForCustomizableObjectPin(UEdGraphNode* Node, const UEdGraphPin& Pin)
 	{
@@ -670,6 +884,7 @@ namespace
 			OutDetails.LODIndex = LODIndex;
 			OutDetails.SectionIndex = SectionIndex;
 			OutDetails.UVChannel = UVChannel;
+			OutDetails.SourceLayoutCount = GetMutableLayoutArrayCount(PinData);
 			return LayoutObject;
 		}
 
@@ -692,7 +907,7 @@ namespace
 
 		for (const TCHAR* PropertyName : {TEXT("SkeletalMesh"), TEXT("StaticMesh")})
 		{
-			TSharedPtr<FJsonValue> Value = Properties->TryGetField(PropertyName);
+			const TSharedPtr<FJsonValue> Value = SoftUE::JsonObjectUtils::FindField(Properties, PropertyName);
 			if (!Value.IsValid())
 			{
 				continue;
@@ -783,7 +998,7 @@ namespace
 			return false;
 		}
 
-		TSharedPtr<FJsonValue> GridValue = Arguments->TryGetField(TEXT("grid_size"));
+		const TSharedPtr<FJsonValue> GridValue = SoftUE::JsonObjectUtils::FindField(Arguments, TEXT("grid_size"));
 		if (GridValue.IsValid())
 		{
 			FIntPoint GridSize;
@@ -797,7 +1012,7 @@ namespace
 			}
 		}
 
-		TSharedPtr<FJsonValue> MaxGridValue = Arguments->TryGetField(TEXT("max_grid_size"));
+		const TSharedPtr<FJsonValue> MaxGridValue = SoftUE::JsonObjectUtils::FindField(Arguments, TEXT("max_grid_size"));
 		if (MaxGridValue.IsValid())
 		{
 			FIntPoint MaxGridSize;
@@ -840,9 +1055,9 @@ namespace
 				return false;
 			}
 
-			TSharedPtr<FJsonValue> MinValue = (*BlockObject)->TryGetField(TEXT("min"));
-			TSharedPtr<FJsonValue> MaxValue = (*BlockObject)->TryGetField(TEXT("max"));
-			TSharedPtr<FJsonValue> SizeValue = (*BlockObject)->TryGetField(TEXT("size"));
+			const TSharedPtr<FJsonValue> MinValue = SoftUE::JsonObjectUtils::FindField(*BlockObject, TEXT("min"));
+			const TSharedPtr<FJsonValue> MaxValue = SoftUE::JsonObjectUtils::FindField(*BlockObject, TEXT("max"));
+			const TSharedPtr<FJsonValue> SizeValue = SoftUE::JsonObjectUtils::FindField(*BlockObject, TEXT("size"));
 			FIntPoint Min;
 			FIntPoint Max;
 			if (!MinValue.IsValid() || !ReadIntPointValue(MinValue, Min, OutError))
@@ -1720,16 +1935,20 @@ FBridgeToolResult USetCustomizableObjectNodePropertyTool::Execute(
 
 	FBridgeAssetModifier::MarkModified(AssetObject);
 	FBridgeAssetModifier::MarkModified(Node);
+	const TArray<FCustomizableObjectPinLinkSnapshot> LinkSnapshots = SnapshotCustomizableObjectPinLinks(Node);
 	TArray<FString> PropertyWarnings = ApplyReflectedProperties(Node, *PropertiesPtr);
 	ApplyCustomizableObjectMeshReferenceFixups(Node, *PropertiesPtr, PropertyWarnings);
 	Node->ReconstructNode();
+	const int32 PreservedPinLinkCount = RestoreCustomizableObjectPinLinks(Node, LinkSnapshots);
 	if (Graph)
 	{
 		Graph->NotifyGraphChanged();
 	}
 	FBridgeAssetModifier::MarkPackageDirty(AssetObject);
 
-	return FBridgeToolResult::Json(BuildNodeResult(AssetPath, Graph, Node, PropertyWarnings));
+	TSharedPtr<FJsonObject> Result = BuildNodeResult(AssetPath, Graph, Node, PropertyWarnings);
+	Result->SetNumberField(TEXT("preserved_pin_link_count"), PreservedPinLinkCount);
+	return FBridgeToolResult::Json(Result);
 }
 
 FString UConnectCustomizableObjectPinsTool::GetToolDescription() const
@@ -2047,7 +2266,7 @@ TMap<FString, FBridgeSchemaProperty> USetCustomizableObjectLayoutBlocksTool::Get
 
 	FBridgeSchemaProperty ParentMaterialNode;
 	ParentMaterialNode.Type = TEXT("string");
-	ParentMaterialNode.Description = TEXT("Optional parent_material_node reference for caller-side bookkeeping; graph connection is still made with connect-pins.");
+	ParentMaterialNode.Description = TEXT("Optional parent material node reference. When supplied, its Mutable internal tag is added to the modifier RequiredTags.");
 	Schema.Add(TEXT("parent_material_node"), ParentMaterialNode);
 
 	FBridgeSchemaProperty LODIndex;
@@ -2126,6 +2345,41 @@ FBridgeToolResult USetCustomizableObjectLayoutBlocksTool::Execute(
 		FBridgeAssetModifier::MarkModified(Graph);
 	}
 
+	FString ParentMaterialNodeRef;
+	UEdGraphNode* ParentMaterialNode = nullptr;
+	UEdGraph* ParentMaterialGraph = nullptr;
+	FString ModifierTargetInternalTag;
+	bool bModifierRequiredTagAdded = false;
+	if (Arguments->TryGetStringField(TEXT("parent_material_node"), ParentMaterialNodeRef) && !ParentMaterialNodeRef.IsEmpty())
+	{
+		ParentMaterialNode = FindNode(AssetObject, ParentMaterialNodeRef, &ParentMaterialGraph);
+		if (!ParentMaterialNode)
+		{
+			return FBridgeToolResult::Error(FString::Printf(
+				TEXT("parent_material_node was provided but no CustomizableObject node matched: %s"),
+				*ParentMaterialNodeRef));
+		}
+
+		FBridgeAssetModifier::MarkModified(ParentMaterialNode);
+		if (ParentMaterialGraph)
+		{
+			FBridgeAssetModifier::MarkModified(ParentMaterialGraph);
+		}
+
+		FString RequiredTagError;
+		if (!AddMutableRequiredTagForParentMaterial(
+			Node,
+			ParentMaterialNode,
+			ModifierTargetInternalTag,
+			bModifierRequiredTagAdded,
+			RequiredTagError))
+		{
+			return FBridgeToolResult::Error(FString::Printf(
+				TEXT("Failed to link ModifierRemoveMeshBlocks to parent material node: %s"),
+				*RequiredTagError));
+		}
+	}
+
 	double ParentLayoutIndex = 0.0;
 	if (Arguments->TryGetNumberField(TEXT("parent_layout_index"), ParentLayoutIndex))
 	{
@@ -2168,15 +2422,24 @@ FBridgeToolResult USetCustomizableObjectLayoutBlocksTool::Execute(
 		{
 			Result->SetStringField(TEXT("mesh_pin"), LayoutTargetDetails.MeshPin->PinName.ToString());
 		}
+		Result->SetBoolField(TEXT("source_layout_attached"), LayoutTargetDetails.SourceLayoutCount > LayoutTargetDetails.UVChannel);
+		Result->SetNumberField(TEXT("source_layout_count"), LayoutTargetDetails.SourceLayoutCount);
 	}
 	if (Arguments->HasField(TEXT("parent_layout_index")))
 	{
 		Result->SetNumberField(TEXT("parent_layout_index"), ParentLayoutIndex);
 	}
-	FString ParentMaterialNode;
-	if (Arguments->TryGetStringField(TEXT("parent_material_node"), ParentMaterialNode) && !ParentMaterialNode.IsEmpty())
+	if (!ParentMaterialNodeRef.IsEmpty())
 	{
-		Result->SetStringField(TEXT("parent_material_node"), ParentMaterialNode);
+		Result->SetStringField(TEXT("parent_material_node"), ParentMaterialNodeRef);
+		Result->SetStringField(TEXT("linkage_method"), TEXT("parent_material_node_internal_tag"));
+		Result->SetStringField(TEXT("modifier_target_internal_tag"), ModifierTargetInternalTag);
+		Result->SetBoolField(TEXT("modifier_required_tag_added"), bModifierRequiredTagAdded);
+		if (ParentMaterialNode)
+		{
+			Result->SetStringField(TEXT("parent_material_node_guid"), ParentMaterialNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+			Result->SetStringField(TEXT("parent_material_node_class"), ParentMaterialNode->GetClass()->GetName());
+		}
 	}
 	return FBridgeToolResult::Json(Result);
 }
