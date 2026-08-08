@@ -1840,6 +1840,18 @@ def test_insights_analyze_reads_traces_through_trace_services_providers():
     assert "top_timers_by_inclusive_time" in source
     assert "top_timers_by_self_time" in source
 
+    # TableEntryLimit is applied AFTER sorting by total inclusive time, so
+    # bottlenecks must aggregate unlimited (0) and rank each metric over the full
+    # set. Limiting first would reduce the self-time list to a re-sort of the
+    # heaviest call trees and omit a timer whose self time leads but whose
+    # inclusive time does not.
+    bottlenecks = source.split("UInsightsAnalyzeTool::AnalyzeBottlenecks(", 1)[1]
+    assert "CreateTimerAggregation(*TimingProvider, Window, 0)" in bottlenecks
+    assert "timers_considered" in bottlenecks
+    assert bottlenecks.count("Rows.Sort(") == 2
+    assert "A.TotalInclusiveTime > B.TotalInclusiveTime" in bottlenecks
+    assert "A.TotalExclusiveTime > B.TotalExclusiveTime" in bottlenecks
+
     # Percentiles matter more than averages for hitch hunting.
     for field in ("median_ms", "p90_ms", "p95_ms", "p99_ms", "hitch_count"):
         assert field in source
