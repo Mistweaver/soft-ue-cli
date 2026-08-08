@@ -199,11 +199,16 @@ namespace
 	 * Runs a timer aggregation over the window. Returns nullptr when the trace has no
 	 * timing data (for example a trace captured without the 'cpu' channel).
 	 * Must be called inside an FAnalysisSessionReadScope.
+	 *
+	 * TableEntryLimit caps the rows the aggregation emits; 0 means no limit. Pass 0
+	 * whenever the caller needs to rank by anything other than total inclusive time,
+	 * because the limit is applied *after* sorting by inclusive time and would
+	 * otherwise silently exclude rows that lead a different ranking.
 	 */
 	TUniquePtr<TraceServices::ITable<TraceServices::FTimingProfilerAggregatedStats>> CreateTimerAggregation(
 		const TraceServices::ITimingProfilerProvider& TimingProvider,
 		const FInsightsAnalysisWindow& Window,
-		int32 TopN)
+		int32 TableEntryLimit)
 	{
 		TraceServices::FCreateAggregationParams Params;
 		Params.IntervalStart = Window.StartTime;
@@ -215,10 +220,26 @@ namespace
 
 		Params.SortBy = TraceServices::FCreateAggregationParams::ESortBy::TotalInclusiveTime;
 		Params.SortOrder = TraceServices::FCreateAggregationParams::ESortOrder::Descending;
-		Params.TableEntryLimit = TopN;
+		Params.TableEntryLimit = TableEntryLimit;
 
 		return TUniquePtr<TraceServices::ITable<TraceServices::FTimingProfilerAggregatedStats>>(
 			TimingProvider.CreateAggregation(Params));
+	}
+
+	/** Reads every row of an aggregation table into an array. */
+	void ReadAggregationRows(
+		const TraceServices::ITable<TraceServices::FTimingProfilerAggregatedStats>& Table,
+		TArray<TraceServices::FTimingProfilerAggregatedStats>& OutRows)
+	{
+		TUniquePtr<TraceServices::ITableReader<TraceServices::FTimingProfilerAggregatedStats>> Reader(
+			Table.CreateReader());
+		for (; Reader.IsValid() && Reader->IsValid(); Reader->NextRow())
+		{
+			if (const TraceServices::FTimingProfilerAggregatedStats* Row = Reader->GetCurrentRow())
+			{
+				OutRows.Add(*Row);
+			}
+		}
 	}
 
 	/** Default and maximum depth of the caller/callee tree. */
@@ -688,15 +709,13 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeTopFunctions(
 		return FBridgeToolResult::Error(TEXT("Timer aggregation failed for this trace."));
 	}
 
+	TArray<TraceServices::FTimingProfilerAggregatedStats> Rows;
+	ReadAggregationRows(*Table, Rows);
+
 	TArray<TSharedPtr<FJsonValue>> Timers;
-	TUniquePtr<TraceServices::ITableReader<TraceServices::FTimingProfilerAggregatedStats>> Reader(
-		Table->CreateReader());
-	for (; Reader.IsValid() && Reader->IsValid(); Reader->NextRow())
+	for (const TraceServices::FTimingProfilerAggregatedStats& Row : Rows)
 	{
-		if (const TraceServices::FTimingProfilerAggregatedStats* Row = Reader->GetCurrentRow())
-		{
-			Timers.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(*Row))));
-		}
+		Timers.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(Row))));
 	}
 
 	// GetRowCount() is the aggregation's row count, which TableEntryLimit has already
@@ -1149,31 +1168,37 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeBottlenecks(
 		return FBridgeToolResult::Json(Result);
 	}
 
+	// Aggregate WITHOUT a row limit. TableEntryLimit is applied after sorting by
+	// total inclusive time, so limiting here would make the self-time ranking below
+	// a mere re-sort of the heaviest call trees - and a timer with huge self time
+	// but modest inclusive time would be omitted from the very list meant to find it.
 	TUniquePtr<TraceServices::ITable<TraceServices::FTimingProfilerAggregatedStats>> Table =
-		CreateTimerAggregation(*TimingProvider, Window, TopN);
+		CreateTimerAggregation(*TimingProvider, Window, 0);
 	if (!Table.IsValid())
 	{
 		Result->SetStringField(TEXT("note"), TEXT("Timer aggregation failed for this trace."));
 		return FBridgeToolResult::Json(Result);
 	}
 
-	// Collect once, then present two orderings: total time spent under a timer
-	// (inclusive) and time spent in the timer itself (exclusive/self).
 	TArray<TraceServices::FTimingProfilerAggregatedStats> Rows;
-	TUniquePtr<TraceServices::ITableReader<TraceServices::FTimingProfilerAggregatedStats>> Reader(
-		Table->CreateReader());
-	for (; Reader.IsValid() && Reader->IsValid(); Reader->NextRow())
-	{
-		if (const TraceServices::FTimingProfilerAggregatedStats* Row = Reader->GetCurrentRow())
+	ReadAggregationRows(*Table, Rows);
+	Result->SetNumberField(TEXT("timers_considered"), Rows.Num());
+
+	// Rank the full set independently for each metric: total time spent under a
+	// timer (inclusive) and time spent in the timer itself (exclusive/self).
+	const int32 EmitCount = FMath::Min(TopN, Rows.Num());
+
+	Rows.Sort(
+		[](const TraceServices::FTimingProfilerAggregatedStats& A,
+		   const TraceServices::FTimingProfilerAggregatedStats& B)
 		{
-			Rows.Add(*Row);
-		}
-	}
+			return A.TotalInclusiveTime > B.TotalInclusiveTime;
+		});
 
 	TArray<TSharedPtr<FJsonValue>> ByInclusive;
-	for (const TraceServices::FTimingProfilerAggregatedStats& Row : Rows)
+	for (int32 Index = 0; Index < EmitCount; ++Index)
 	{
-		ByInclusive.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(Row))));
+		ByInclusive.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(Rows[Index]))));
 	}
 
 	Rows.Sort(
@@ -1184,16 +1209,17 @@ FBridgeToolResult UInsightsAnalyzeTool::AnalyzeBottlenecks(
 		});
 
 	TArray<TSharedPtr<FJsonValue>> ByExclusive;
-	for (const TraceServices::FTimingProfilerAggregatedStats& Row : Rows)
+	for (int32 Index = 0; Index < EmitCount; ++Index)
 	{
-		ByExclusive.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(Row))));
+		ByExclusive.Add(MakeShareable(new FJsonValueObject(AggregatedTimerToJson(Rows[Index]))));
 	}
 
 	Result->SetArrayField(TEXT("top_timers_by_inclusive_time"), ByInclusive);
 	Result->SetArrayField(TEXT("top_timers_by_self_time"), ByExclusive);
 	Result->SetStringField(
 		TEXT("hint"),
-		TEXT("'top_timers_by_self_time' isolates where time is actually spent; "
+		TEXT("Both lists are ranked over every timer in the window, not a shared shortlist. "
+		     "'top_timers_by_self_time' isolates where time is actually spent; "
 		     "'top_timers_by_inclusive_time' shows which call trees are most expensive overall."));
 
 	return FBridgeToolResult::Json(Result);
