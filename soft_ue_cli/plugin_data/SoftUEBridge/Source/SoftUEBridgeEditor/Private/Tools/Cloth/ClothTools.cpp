@@ -861,7 +861,9 @@ TSharedPtr<FJsonObject> ChaosClothAssetToJson(
 	Result->SetStringField(TEXT("guid"), Asset->GetAssetGuid(0).ToString(EGuidFormats::DigitsWithHyphens));
 
 	TArray<TSharedPtr<FJsonValue>> LodValues;
-	const TArray<TSharedRef<const FManagedArrayCollection>>& Collections = Asset->GetClothCollections();
+	// Read through a const pointer: the non-const GetClothCollections() is deprecated in 5.7 and slated for removal in 5.9.
+	const UChaosClothAsset* ConstAsset = Asset;
+	const TArray<TSharedRef<const FManagedArrayCollection>>& Collections = ConstAsset->GetClothCollections();
 	for (int32 LodIndex = 0; LodIndex < Collections.Num(); ++LodIndex)
 	{
 		LodValues.Add(MakeShared<FJsonValueObject>(ChaosClothCollectionToJson(Collections[LodIndex], LodIndex, bDumpWeights, DumpWeightMapName, WeightLimit, GapTolerance, GapLimit)));
@@ -943,7 +945,7 @@ bool OutputChaosClothAssetExists(const FString& OutputAssetPath, const FString& 
 		|| FPackageName::DoesPackageExist(PackageName, &PackageFilename);
 }
 
-bool HasChaosClothCollectionData(UChaosClothAsset* Asset)
+bool HasChaosClothCollectionData(const UChaosClothAsset* Asset)
 {
 	if (!Asset)
 	{
@@ -985,7 +987,7 @@ bool ValidateConvertedChaosClothAsset(UChaosClothAsset* Asset, FString& OutError
 }
 
 bool CloneChaosClothCollectionsForLod(
-	UChaosClothAsset* Asset,
+	const UChaosClothAsset* Asset,
 	int32 LodIndex,
 	TArray<TSharedRef<const FManagedArrayCollection>>& OutCollections,
 	TSharedPtr<FManagedArrayCollection>& OutMutableCollection,
@@ -1027,7 +1029,9 @@ bool RebuildChaosClothAsset(
 	const TArray<TSharedRef<const FManagedArrayCollection>>& Collections,
 	FString& OutError)
 {
-	const TArray<TSharedRef<const FManagedArrayCollection>> OriginalCollections = Asset->GetClothCollections();
+	// Snapshot for rollback through a const pointer: the non-const GetClothCollections() is deprecated in 5.7.
+	const UChaosClothAsset* ConstAsset = Asset;
+	const TArray<TSharedRef<const FManagedArrayCollection>> OriginalCollections = ConstAsset->GetClothCollections();
 	FText ErrorText;
 	FText VerboseText;
 	Asset->Build(Collections, nullptr, &ErrorText, &VerboseText);
@@ -1609,7 +1613,10 @@ TSharedPtr<FJsonObject> ClothAssetToJson(UClothingAssetBase* Asset)
 	Json->SetStringField(TEXT("name"), Asset->GetName());
 	Json->SetStringField(TEXT("class"), Asset->GetClass()->GetName());
 	Json->SetStringField(TEXT("guid"), Asset->GetAssetGuid().ToString(EGuidFormats::DigitsWithHyphens));
-	Json->SetNumberField(TEXT("num_lods"), Asset->GetNumLods());
+	// UClothingAssetBase::GetNumLods() is deprecated in 5.7; UClothingAssetCommon's override is not. The other subclass
+	// (UChaosClothAssetSKMClothingAsset) doesn't override it, so the 0 fallback matches the base class's stub return.
+	const UClothingAssetCommon* CommonLodSource = Cast<UClothingAssetCommon>(Asset);
+	Json->SetNumberField(TEXT("num_lods"), CommonLodSource ? CommonLodSource->GetNumLods() : 0);
 
 	if (UClothingAssetCommon* Common = Cast<UClothingAssetCommon>(Asset))
 	{
@@ -3406,7 +3413,11 @@ FBridgeToolResult UClothBindTool::Execute(const TSharedPtr<FJsonObject>& Argumen
 	{
 		return FBridgeToolResult::Error(SectionIndex == INDEX_NONE ? TEXT("section_index is required") : ValidationError);
 	}
-	if (!Asset->IsValidLod(ClothLodIndex))
+	// UClothingAssetBase::IsValidLod() is deprecated in 5.7; UClothingAssetCommon's override is not. The other subclass
+	// (UChaosClothAssetSKMClothingAsset) doesn't override it, so treating a failed cast as invalid matches the base
+	// class's stub return of false.
+	const UClothingAssetCommon* CommonAsset = Cast<UClothingAssetCommon>(Asset);
+	if (!CommonAsset || !CommonAsset->IsValidLod(ClothLodIndex))
 	{
 		return FBridgeToolResult::Error(FString::Printf(TEXT("cloth_lod_index %d is out of range"), ClothLodIndex));
 	}
