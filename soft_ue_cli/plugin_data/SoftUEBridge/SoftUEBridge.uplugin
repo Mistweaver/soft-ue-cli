@@ -44,6 +44,20 @@
 			]
 		},
 		{
+			"Name": "ControlRig",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "RigVM",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true,
 			"Optional": true,

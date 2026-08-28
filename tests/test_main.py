@@ -6310,3 +6310,176 @@ def test_as_flag_exists_only_on_session_commands():
     assert parser.parse_args(["session", "list", "--as", "cape-cloth"]).session_as == "cape-cloth"
     with pytest.raises(SystemExit):
         parser.parse_args(["pie-session", "start", "--as", "cape-cloth"])
+
+
+def test_parser_rig_inspect_defaults():
+    parser = build_parser()
+    args = parser.parse_args(["rig", "inspect", "/Game/Characters/CR_Hero"])
+
+    assert args.asset_path == "/Game/Characters/CR_Hero"
+    assert args.transforms == "local"
+    assert args.element_type is None
+    assert args.include_settings is False
+
+
+def test_cmd_rig_inspect_forwards_filters():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "rig",
+            "inspect",
+            "/Game/Characters/CR_Hero",
+            "--element-type",
+            "control,bone",
+            "--name-filter",
+            "hand_",
+            "--transforms",
+            "both",
+            "--include-settings",
+        ]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-inspect",
+        {
+            "asset_path": "/Game/Characters/CR_Hero",
+            "transforms": "both",
+            "element_type": "control,bone",
+            "name_filter": "hand_",
+            "include_settings": True,
+        },
+    )
+
+
+def test_cmd_rig_inspect_omits_unset_filters():
+    parser = build_parser()
+    args = parser.parse_args(["rig", "inspect", "/Game/Characters/CR_Hero"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-inspect",
+        {"asset_path": "/Game/Characters/CR_Hero", "transforms": "local"},
+    )
+
+
+def test_parser_rig_inspect_rejects_unknown_transform():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["rig", "inspect", "/Game/CR_Hero", "--transforms", "sideways"])
+
+
+def test_cmd_rig_control_get_defaults_to_current_values():
+    parser = build_parser()
+    args = parser.parse_args(["rig", "control", "get", "/Game/Characters/CR_Hero"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-control-get",
+        {"asset_path": "/Game/Characters/CR_Hero", "value_type": "current"},
+    )
+
+
+def test_cmd_rig_control_get_forwards_named_controls_and_initial_values():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "rig",
+            "control",
+            "get",
+            "/Game/Characters/CR_Hero",
+            "--control",
+            "hand_l_ctrl,hand_r_ctrl",
+            "--value-type",
+            "initial",
+        ]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-control-get",
+        {
+            "asset_path": "/Game/Characters/CR_Hero",
+            "value_type": "initial",
+            "controls": "hand_l_ctrl,hand_r_ctrl",
+        },
+    )
+
+
+def test_cmd_rig_graph_inspect_forwards_graph_and_verbosity_flags():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "rig",
+            "graph",
+            "inspect",
+            "/Game/Characters/CR_Hero",
+            "--graph",
+            "RigVMModel",
+            "--node-filter",
+            "GetTransform",
+            "--include-pins",
+            "--include-links",
+        ]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-graph-inspect",
+        {
+            "asset_path": "/Game/Characters/CR_Hero",
+            "graph_name": "RigVMModel",
+            "node_filter": "GetTransform",
+            "include_pins": True,
+            "include_links": True,
+        },
+    )
+
+
+def test_cmd_rig_graph_inspect_omits_unset_flags():
+    parser = build_parser()
+    args = parser.parse_args(["rig", "graph", "inspect", "/Game/Characters/CR_Hero"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with("rig-graph-inspect", {"asset_path": "/Game/Characters/CR_Hero"})
+
+
+def test_rig_family_root_requires_a_subcommand():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["rig"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["rig", "control"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["rig", "graph"])
+
+
+def test_cmd_rig_inspect_forwards_include_offsets():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["rig", "inspect", "/Game/Characters/CR_Hero", "--include-offsets"]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "rig-inspect",
+        {
+            "asset_path": "/Game/Characters/CR_Hero",
+            "transforms": "local",
+            "include_offsets": True,
+        },
+    )
