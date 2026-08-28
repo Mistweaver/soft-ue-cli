@@ -1017,6 +1017,45 @@ def cmd_metasound_inspect(args: argparse.Namespace) -> None:
     _print_json(_run_tool("metasound-inspect", {"asset_path": args.asset_path}))
 
 
+def cmd_rig_inspect(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "asset_path": _fix_msys_asset_path(args.asset_path),
+        "transforms": args.transforms,
+    }
+    if args.element_type:
+        arguments["element_type"] = args.element_type
+    if args.name_filter:
+        arguments["name_filter"] = args.name_filter
+    if args.include_settings:
+        arguments["include_settings"] = True
+    if args.include_offsets:
+        arguments["include_offsets"] = True
+    _print_json(_run_tool("rig-inspect", arguments))
+
+
+def cmd_rig_control_get(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "asset_path": _fix_msys_asset_path(args.asset_path),
+        "value_type": args.value_type,
+    }
+    if args.control:
+        arguments["controls"] = args.control
+    _print_json(_run_tool("rig-control-get", arguments))
+
+
+def cmd_rig_graph_inspect(args: argparse.Namespace) -> None:
+    arguments: dict = {"asset_path": _fix_msys_asset_path(args.asset_path)}
+    if args.graph:
+        arguments["graph_name"] = args.graph
+    if args.node_filter:
+        arguments["node_filter"] = args.node_filter
+    if args.include_pins:
+        arguments["include_pins"] = True
+    if args.include_links:
+        arguments["include_links"] = True
+    _print_json(_run_tool("rig-graph-inspect", arguments))
+
+
 def cmd_delete_asset(args: argparse.Namespace) -> None:
     _print_json(_run_tool("delete-asset", {"asset_path": args.asset_path}))
 
@@ -6830,6 +6869,134 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     )
     p_metasound_inspect.add_argument("asset_path", help="Asset path to the MetaSound (e.g., /Game/Audio/MS_Footsteps)")
     p_metasound_inspect.set_defaults(func=cmd_metasound_inspect)
+
+    p_rig = sub.add_parser(
+        "rig",
+        help="Canonical Control Rig inspection command family.",
+        description=(
+            "Canonical Control Rig hierarchy, control value, and RigVM graph inspection family.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig inspect /Game/Characters/CR_Hero\n"
+            "  soft-ue-cli rig control get /Game/Characters/CR_Hero\n"
+            "  soft-ue-cli rig graph inspect /Game/Characters/CR_Hero"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    rig_sub = p_rig.add_subparsers(dest="rig_action", required=True)
+
+    p_rig_inspect = rig_sub.add_parser(
+        "inspect",
+        help="Read a Control Rig hierarchy.",
+        description=(
+            "Inspect a Control Rig hierarchy through the rig-inspect bridge tool.\n"
+            "Returns JSON with hierarchy elements (bones, controls, nulls, curves, sockets, connectors),\n"
+            "their parents, and their transforms.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig inspect /Game/Characters/CR_Hero\n"
+            "  soft-ue-cli rig inspect /Game/Characters/CR_Hero --element-type control --include-settings\n"
+            "  soft-ue-cli rig inspect /Game/Characters/CR_Hero --name-filter hand_ --transforms both"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_rig_inspect.add_argument("asset_path", help="Control Rig asset path (e.g., /Game/Characters/CR_Hero)")
+    p_rig_inspect.add_argument(
+        "--element-type",
+        metavar="TYPES",
+        help="Comma-separated element types to include: bone, null, control, curve, socket, connector",
+    )
+    p_rig_inspect.add_argument("--name-filter", metavar="TEXT", help="Only include elements whose name contains TEXT")
+    p_rig_inspect.add_argument(
+        "--transforms",
+        choices=["none", "local", "global", "both"],
+        default="local",
+        help="Which transforms to serialize per element (default: local)",
+    )
+    p_rig_inspect.add_argument(
+        "--include-settings",
+        action="store_true",
+        help="Include control settings (control type, primary axis, limits, shape) on control elements",
+    )
+    p_rig_inspect.add_argument(
+        "--include-offsets",
+        action="store_true",
+        help="Include each control's offset transform (where the gizmo renders, independent of its value)",
+    )
+    p_rig_inspect.set_defaults(func=cmd_rig_inspect)
+
+    p_rig_control = rig_sub.add_parser(
+        "control",
+        help="Control Rig control value commands.",
+        description=(
+            "Canonical Control Rig control value family.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig control get /Game/Characters/CR_Hero"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    rig_control_sub = p_rig_control.add_subparsers(dest="rig_control_action", required=True)
+
+    p_rig_control_get = rig_control_sub.add_parser(
+        "get",
+        help="Read Control Rig control values.",
+        description=(
+            "Read control values from a Control Rig through the rig-control-get bridge tool.\n"
+            "Each value is typed per the control ERigControlType (bool, float, integer, vector2d,\n"
+            "position, scale, rotator, transform, euler transform).\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig control get /Game/Characters/CR_Hero\n"
+            "  soft-ue-cli rig control get /Game/Characters/CR_Hero --control hand_l_ctrl,hand_r_ctrl\n"
+            "  soft-ue-cli rig control get /Game/Characters/CR_Hero --value-type initial"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_rig_control_get.add_argument("asset_path", help="Control Rig asset path (e.g., /Game/Characters/CR_Hero)")
+    p_rig_control_get.add_argument(
+        "--control",
+        metavar="NAMES",
+        help="Comma-separated control names to read (default: every control in the hierarchy)",
+    )
+    p_rig_control_get.add_argument(
+        "--value-type",
+        choices=["current", "initial"],
+        default="current",
+        help="Read current or initial control values (default: current)",
+    )
+    p_rig_control_get.set_defaults(func=cmd_rig_control_get)
+
+    p_rig_graph = rig_sub.add_parser(
+        "graph",
+        help="Control Rig RigVM graph commands.",
+        description=(
+            "Canonical Control Rig RigVM graph inspection family.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig graph inspect /Game/Characters/CR_Hero"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    rig_graph_sub = p_rig_graph.add_subparsers(dest="rig_graph_action", required=True)
+
+    p_rig_graph_inspect = rig_graph_sub.add_parser(
+        "inspect",
+        help="Read RigVM graph models on a Control Rig.",
+        description=(
+            "Inspect RigVM graph models through the rig-graph-inspect bridge tool.\n"
+            "Reads the RigVM model itself, not the Blueprint EdGraph view that `blueprint graph inspect`\n"
+            "walks, so node, pin, and link data reflect what the rig actually executes.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli rig graph inspect /Game/Characters/CR_Hero\n"
+            "  soft-ue-cli rig graph inspect /Game/Characters/CR_Hero --graph RigVMModel\n"
+            "  soft-ue-cli rig graph inspect /Game/Characters/CR_Hero --include-pins --include-links"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_rig_graph_inspect.add_argument("asset_path", help="Control Rig asset path (e.g., /Game/Characters/CR_Hero)")
+    p_rig_graph_inspect.add_argument("--graph", metavar="NAME", help="Only inspect the named RigVM model")
+    p_rig_graph_inspect.add_argument(
+        "--node-filter", metavar="TEXT", help="Only include nodes whose name or title contains TEXT"
+    )
+    p_rig_graph_inspect.add_argument("--include-pins", action="store_true", help="Include pin data on every node")
+    p_rig_graph_inspect.add_argument("--include-links", action="store_true", help="Include the graph link list")
+    p_rig_graph_inspect.set_defaults(func=cmd_rig_graph_inspect)
 
     p_cus = sub.add_parser(
         "compare-umg-screenshot",

@@ -419,3 +419,32 @@ def test_catalog_marks_session_family_as_bridge_commands():
     assert ask["category"] == "session"
     assert leave["layer"] == "bridge"
     assert leave["requires_bridge"] is True
+
+
+def test_catalog_marks_rig_commands_as_control_rig_plugin_tools():
+    family = get_command_metadata("rig")
+    inspect = get_command_metadata("rig inspect")
+    control_get = get_command_metadata("rig control get")
+    graph_inspect = get_command_metadata("rig graph inspect")
+
+    assert family["status"] == "canonical"
+    assert family["category"] == "rig"
+    assert family["required_plugins"][0]["name"] == "Control Rig"
+
+    for meta in (inspect, control_get, graph_inspect):
+        assert meta["status"] == "canonical"
+        assert meta["layer"] == "bridge"
+        assert meta["category"] == "rig"
+        assert meta["requires_bridge"] is True
+        assert meta["requires_editor"] is True
+        assert meta["requires_pie"] is False
+
+    assert inspect["required_plugins"][0]["module"] == "ControlRig"
+    assert control_get["required_plugins"][0]["module"] == "ControlRig"
+    assert graph_inspect["required_plugins"][0]["module"] == "RigVMDeveloper"
+
+
+def test_catalog_can_filter_rig_commands_by_control_rig_plugin():
+    names = {entry["name"] for entry in filter_command_metadata(plugin="Control Rig")}
+
+    assert {"rig inspect", "rig control get", "rig graph inspect"} <= names

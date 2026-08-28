@@ -97,6 +97,8 @@
 #include "Tools/Animation/AnimSequenceRetargetTool.h"
 #include "Tools/Animation/AnimSyncMarkerTools.h"
 #include "Tools/Animation/PoseSearchSchemaTools.h"
+#include "Tools/Rig/RigGraphInspectTool.h"
+#include "Tools/Rig/RigInspectTools.h"
 
 // Widget
 #include "Tools/Widget/ApplyWidgetTreeTool.h"
@@ -198,6 +200,18 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("pose-search-database-repoint")))
 	{
 		Registry.RegisterToolClass<UPoseSearchDatabaseRepointTool>();
+	}
+	if (!Registry.HasTool(TEXT("rig-inspect")))
+	{
+		Registry.RegisterToolClass<URigInspectTool>();
+	}
+	if (!Registry.HasTool(TEXT("rig-control-get")))
+	{
+		Registry.RegisterToolClass<URigControlGetTool>();
+	}
+	if (!Registry.HasTool(TEXT("rig-graph-inspect")))
+	{
+		Registry.RegisterToolClass<URigGraphInspectTool>();
 	}
 	if (!Registry.HasTool(TEXT("asset-repoint-references")))
 	{

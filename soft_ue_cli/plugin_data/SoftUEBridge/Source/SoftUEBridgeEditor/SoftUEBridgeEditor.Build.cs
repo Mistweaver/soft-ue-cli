@@ -37,6 +37,14 @@ public class SoftUEBridgeEditor : ModuleRules
 			"IKRig",
 			"IKRigEditor",
 
+			// Control Rig / RigVM (read-only hierarchy, control value, and graph inspection).
+			// ControlRig carries URigHierarchy and IRigHierarchyProvider; RigVMDeveloper carries
+			// URigVMBlueprint and the graph model. ControlRigDeveloper is deliberately absent:
+			// 5.8 renamed its asset interface, and nothing here needs to name that type.
+			"ControlRig",
+			"RigVM",
+			"RigVMDeveloper",
+
 			// Chaos Cloth
 			"ClothingSystemRuntimeInterface",
 			"ClothingSystemRuntimeCommon",

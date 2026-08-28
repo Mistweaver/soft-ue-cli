@@ -635,3 +635,26 @@ def test_session_leaf_descriptions_are_not_the_bare_prog():
         prog = f"soft-ue-cli {tool['name']}"
         assert description.strip() != prog, f"{tool['name']} description is its prog"
         assert len(description) > len(prog), f"{tool['name']} description too thin"
+
+
+def test_nested_rig_family_root_is_not_auto_exposed_to_mcp():
+    assert "rig" in EXCLUDED_COMMANDS
+    assert "rig" not in {tool["name"] for tool in extract_tools()}
+
+
+def test_rig_leaf_commands_are_exposed_to_mcp():
+    tools = {tool["name"]: tool for tool in extract_tools()}
+
+    for name in ("rig inspect", "rig control get", "rig graph inspect"):
+        assert name in tools, f"{name} missing from MCP surface"
+        assert "asset_path" in tools[name]["parameters"]["properties"]
+        assert "asset_path" in tools[name]["parameters"].get("required", [])
+
+
+def test_rig_inspect_transforms_choice_is_exposed_with_default():
+    tool = next(t for t in extract_tools() if t["name"] == "rig inspect")
+    transforms = tool["parameters"]["properties"]["transforms"]
+
+    assert transforms["default"] == "local"
+    assert set(transforms["enum"]) == {"none", "local", "global", "both"}
+    assert "transforms" not in tool["parameters"].get("required", [])
