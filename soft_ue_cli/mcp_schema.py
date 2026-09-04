@@ -53,6 +53,7 @@ EXCLUDED_COMMANDS: frozenset[str] = frozenset({
     "umg",
     "metasound",
     "mutable",
+    "niagara",
     "rig",
     "runtime",
     "session",
