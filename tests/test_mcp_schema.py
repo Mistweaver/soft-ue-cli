@@ -578,7 +578,7 @@ def test_tool_count_is_reasonable():
     """Should have a stable, non-trivial tool count after exclusions."""
     tools = extract_tools()
     assert len(tools) >= 60
-    assert len(tools) <= 260
+    assert len(tools) <= 265
 
 
 def test_skeletal_socket_tools_are_exposed():

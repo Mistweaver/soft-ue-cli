@@ -58,6 +58,13 @@
 			]
 		},
 		{
+			"Name": "Niagara",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true,
 			"Optional": true,

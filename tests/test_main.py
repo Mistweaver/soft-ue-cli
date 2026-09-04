@@ -6456,6 +6456,70 @@ def test_cmd_rig_graph_inspect_omits_unset_flags():
     mock_run.assert_called_once_with("rig-graph-inspect", {"asset_path": "/Game/Characters/CR_Hero"})
 
 
+def test_cmd_niagara_system_inspect_sends_only_the_asset_path_by_default():
+    # The bridge tool defaults modules/renderers/parameters on, so the common call carries no flags.
+    parser = build_parser()
+    args = parser.parse_args(["niagara", "system", "inspect", "/Game/FX/NS_Fire"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with("niagara-system-inspect", {"asset_path": "/Game/FX/NS_Fire"})
+
+
+def test_cmd_niagara_system_inspect_forwards_emitter_filter():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["niagara", "system", "inspect", "/Game/FX/NS_Fire", "--emitter", "Smoke"]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "niagara-system-inspect",
+        {"asset_path": "/Game/FX/NS_Fire", "emitter": "Smoke"},
+    )
+
+
+def test_cmd_niagara_system_inspect_forwards_opt_outs_as_false():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "niagara",
+            "system",
+            "inspect",
+            "/Game/FX/NS_Fire",
+            "--no-modules",
+            "--no-renderers",
+            "--no-parameters",
+            "--skip-disabled-modules",
+        ]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "niagara-system-inspect",
+        {
+            "asset_path": "/Game/FX/NS_Fire",
+            "include_modules": False,
+            "include_renderers": False,
+            "include_parameters": False,
+            "include_disabled_modules": False,
+        },
+    )
+
+
+def test_niagara_family_root_requires_a_subcommand():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["niagara"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["niagara", "system"])
+
+
 def test_rig_family_root_requires_a_subcommand():
     parser = build_parser()
     with pytest.raises(SystemExit):
