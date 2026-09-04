@@ -100,6 +100,9 @@
 #include "Tools/Rig/RigGraphInspectTool.h"
 #include "Tools/Rig/RigInspectTools.h"
 
+// Niagara
+#include "Tools/Niagara/NiagaraSystemInspectTool.h"
+
 // Widget
 #include "Tools/Widget/ApplyWidgetTreeTool.h"
 #include "Tools/Widget/WidgetBlueprintTool.h"
@@ -276,6 +279,12 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("cloth-set-collision")))
 	{
 		Registry.RegisterToolClass<UClothSetCollisionTool>();
+	}
+	// Deferred with the other plugin-backed tools: NiagaraEditor owns the script graphs this reads,
+	// and it is not guaranteed loaded at our PostEngineInit startup.
+	if (!Registry.HasTool(TEXT("niagara-system-inspect")))
+	{
+		Registry.RegisterToolClass<UNiagaraSystemInspectTool>();
 	}
 
 	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("Registered deferred editor bridge tools; total tools: %d"), Registry.GetToolCount());
