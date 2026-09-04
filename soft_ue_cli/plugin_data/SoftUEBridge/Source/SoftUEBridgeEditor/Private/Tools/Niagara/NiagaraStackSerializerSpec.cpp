@@ -69,6 +69,42 @@ void FNiagaraStackSerializerSpec::Define()
 		});
 	});
 
+	Describe("InputSourceKindToString", [this]()
+	{
+		It("names every source kind", [this]()
+		{
+			// A module input's value is not actionable without knowing where it came from: a literal
+			// can be edited in place, a link has to be followed, a dynamic input is a subtree.
+			using NiagaraStackSerializer::EInputSourceKind;
+			TestEqual(TEXT("default"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Default), TEXT("default"));
+			TestEqual(TEXT("literal"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Literal), TEXT("literal"));
+			TestEqual(TEXT("linked"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Linked), TEXT("linked"));
+			TestEqual(TEXT("dynamic input"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::DynamicInput),
+				TEXT("dynamic_input"));
+			TestEqual(TEXT("data interface"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::DataInterface),
+				TEXT("data_interface"));
+			TestEqual(TEXT("expression"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Expression),
+				TEXT("expression"));
+		});
+
+		It("distinguishes default from literal", [this]()
+		{
+			// "left alone" and "explicitly set to this value" are different authoring facts, and
+			// collapsing them would hide whether an override exists at all.
+			using NiagaraStackSerializer::EInputSourceKind;
+			TestNotEqual(
+				TEXT("default is not literal"),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Default),
+				NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind::Literal));
+		});
+	});
+
 	Describe("EmitterModeToString", [this]()
 	{
 		It("names both emitter modes", [this]()

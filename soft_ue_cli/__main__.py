@@ -1069,6 +1069,13 @@ def cmd_niagara_system_inspect(args: argparse.Namespace) -> None:
         arguments["include_parameters"] = False
     if args.skip_disabled_modules:
         arguments["include_disabled_modules"] = False
+    # Opt-in on the bridge side, so these are forwarded only when asked for.
+    if args.include_module_inputs:
+        arguments["include_module_inputs"] = True
+    if args.include_curves:
+        arguments["include_curves"] = True
+    if args.max_dynamic_input_depth is not None:
+        arguments["max_dynamic_input_depth"] = args.max_dynamic_input_depth
     _print_json(_run_tool("niagara-system-inspect", arguments))
 
 
@@ -7086,6 +7093,26 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         "--skip-disabled-modules",
         action="store_true",
         help="Omit stack modules whose node is disabled (they are included by default)",
+    )
+    p_niagara_system_inspect.add_argument(
+        "--include-module-inputs",
+        action="store_true",
+        help=(
+            "Include every module input and where its value comes from: default, literal, linked "
+            "(with the parameter path), dynamic_input (with nested inputs), data_interface, or "
+            "expression"
+        ),
+    )
+    p_niagara_system_inspect.add_argument(
+        "--include-curves",
+        action="store_true",
+        help="Include curve keys for curves reached through a module input (implies --include-module-inputs)",
+    )
+    p_niagara_system_inspect.add_argument(
+        "--max-dynamic-input-depth",
+        type=int,
+        metavar="N",
+        help="How far to recurse into nested dynamic inputs (default 3)",
     )
     p_niagara_system_inspect.set_defaults(func=cmd_niagara_system_inspect)
 

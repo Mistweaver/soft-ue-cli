@@ -6512,6 +6512,50 @@ def test_cmd_niagara_system_inspect_forwards_opt_outs_as_false():
     )
 
 
+def test_cmd_niagara_system_inspect_forwards_module_input_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "niagara",
+            "system",
+            "inspect",
+            "/Game/FX/NS_Fire",
+            "--include-module-inputs",
+            "--include-curves",
+            "--max-dynamic-input-depth",
+            "5",
+        ]
+    )
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    mock_run.assert_called_once_with(
+        "niagara-system-inspect",
+        {
+            "asset_path": "/Game/FX/NS_Fire",
+            "include_module_inputs": True,
+            "include_curves": True,
+            "max_dynamic_input_depth": 5,
+        },
+    )
+
+
+def test_cmd_niagara_system_inspect_omits_module_input_options_by_default():
+    # These are opt-in on the bridge side; forwarding them unasked would make every call pay for
+    # the override-node walk.
+    parser = build_parser()
+    args = parser.parse_args(["niagara", "system", "inspect", "/Game/FX/NS_Fire"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={}) as mock_run:
+        with patch("soft_ue_cli.__main__._print_json"):
+            args.func(args)
+
+    sent = mock_run.call_args[0][1]
+    assert "include_module_inputs" not in sent
+    assert "include_curves" not in sent
+    assert "max_dynamic_input_depth" not in sent
+
+
 def test_niagara_family_root_requires_a_subcommand():
     parser = build_parser()
     with pytest.raises(SystemExit):

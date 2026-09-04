@@ -3,11 +3,15 @@
 #include "Tools/Niagara/NiagaraStackSerializer.h"
 
 #include "Algo/Reverse.h"
+#include "Curves/RichCurve.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "EdGraph/EdGraphNode.h"
+#include "Materials/MaterialInterface.h"
 #include "NiagaraDataInterface.h"
 #include "NiagaraEffectType.h"
+#include "NiagaraNodeInput.h"
+#include "UObject/UnrealType.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterBase.h"
 #include "NiagaraEmitterHandle.h"
@@ -64,7 +68,14 @@ namespace NiagaraStackSerializer
 			return OutputNodes;
 		}
 
-		TArray<TSharedPtr<FJsonValue>> SerializeStack(UNiagaraNodeOutput* OutputNode, bool bIncludeDisabled)
+		TArray<TSharedPtr<FJsonValue>> SerializeModuleInputs(
+			const UNiagaraNodeFunctionCall* ModuleNode,
+			const FNiagaraInspectOptions& Options,
+			int32 Depth);
+
+		TArray<TSharedPtr<FJsonValue>> SerializeStack(
+			UNiagaraNodeOutput* OutputNode,
+			const FNiagaraInspectOptions& Options)
 		{
 			TArray<UNiagaraNodeFunctionCall*> Modules;
 			CollectStackModules(OutputNode, Modules);
@@ -72,13 +83,263 @@ namespace NiagaraStackSerializer
 			TArray<TSharedPtr<FJsonValue>> ModulesJson;
 			for (const UNiagaraNodeFunctionCall* Module : Modules)
 			{
-				if (!Module || (!bIncludeDisabled && !Module->IsNodeEnabled()))
+				if (!Module || (!Options.bIncludeDisabledModules && !Module->IsNodeEnabled()))
 				{
 					continue;
 				}
-				ModulesJson.Add(MakeShared<FJsonValueObject>(SerializeModule(Module)));
+				TSharedPtr<FJsonObject> ModuleJson = SerializeModule(Module);
+				if (Options.bIncludeModuleInputs || Options.bIncludeCurves)
+				{
+					ModuleJson->SetArrayField(TEXT("inputs"), SerializeModuleInputs(Module, Options, 0));
+				}
+				ModulesJson.Add(MakeShared<FJsonValueObject>(ModuleJson));
 			}
 			return ModulesJson;
+		}
+
+		// The override and linked-value nodes live in NiagaraEditor/Private and cannot be included
+		// from another plugin, so they are recognised by class name and read through UEdGraphPin.
+		// The pins are the whole interface needed here, and these class names are stable.
+		const TCHAR* ParameterMapSetClassName = TEXT("NiagaraNodeParameterMapSet");
+		const TCHAR* ParameterMapGetClassName = TEXT("NiagaraNodeParameterMapGet");
+
+		bool IsNodeOfClass(const UEdGraphNode* Node, const TCHAR* ClassName)
+		{
+			return Node != nullptr && Node->GetClass()->GetName() == ClassName;
+		}
+
+		/** Reads a property by name regardless of C++ access; several Niagara members are private. */
+		UObject* GetObjectPropertyByName(const UObject* Owner, const TCHAR* PropertyName)
+		{
+			if (!Owner)
+			{
+				return nullptr;
+			}
+			const FObjectPropertyBase* Property =
+				FindFProperty<FObjectPropertyBase>(Owner->GetClass(), PropertyName);
+			return Property ? Property->GetObjectPropertyValue_InContainer(Owner) : nullptr;
+		}
+
+		/** Every FRichCurve on an object, by property name, as (time, value, interp) key arrays. */
+		TSharedPtr<FJsonObject> SerializeCurvesOn(const UObject* Object)
+		{
+			TSharedPtr<FJsonObject> CurvesJson = MakeShared<FJsonObject>();
+			if (!Object)
+			{
+				return CurvesJson;
+			}
+
+			for (TFieldIterator<FStructProperty> It(Object->GetClass()); It; ++It)
+			{
+				if (It->Struct != FRichCurve::StaticStruct())
+				{
+					continue;
+				}
+				// The cooked editor cache duplicates the authored curve; reporting both would double
+				// every payload and invite a reader to edit the copy that is regenerated.
+				const FString PropertyName = It->GetName();
+				if (PropertyName.Contains(TEXT("CookedEditorCache")))
+				{
+					continue;
+				}
+
+				const FRichCurve* Curve = It->ContainerPtrToValuePtr<FRichCurve>(Object);
+				if (!Curve)
+				{
+					continue;
+				}
+
+				TArray<TSharedPtr<FJsonValue>> KeysJson;
+				for (const FRichCurveKey& Key : Curve->GetConstRefOfKeys())
+				{
+					TSharedPtr<FJsonObject> KeyJson = MakeShared<FJsonObject>();
+					KeyJson->SetNumberField(TEXT("time"), Key.Time);
+					KeyJson->SetNumberField(TEXT("value"), Key.Value);
+					// InterpMode is a TEnumAsByte; StaticEnum<> has no specialisation for the wrapper,
+					// so unwrap it to the underlying enum before reflecting on it.
+					KeyJson->SetStringField(TEXT("interp"), EnumToString(Key.InterpMode.GetValue()));
+					KeysJson.Add(MakeShared<FJsonValueObject>(KeyJson));
+				}
+				CurvesJson->SetArrayField(PropertyName, KeysJson);
+			}
+
+			return CurvesJson;
+		}
+
+		/**
+		 * The override node for a module: the parameter-map set node immediately upstream of it on
+		 * the stack chain. Its input pins, named "<ModuleName>.<Input>", carry every value the
+		 * author actually set. An input with no pin here is still at the module's own default.
+		 */
+		const UEdGraphNode* FindOverrideNode(const UNiagaraNodeFunctionCall* ModuleNode)
+		{
+			if (!ModuleNode)
+			{
+				return nullptr;
+			}
+			for (const UEdGraphPin* Pin : ModuleNode->Pins)
+			{
+				if (!Pin || Pin->Direction != EGPD_Input || !IsParameterMapPin(Pin) || Pin->LinkedTo.Num() == 0)
+				{
+					continue;
+				}
+				const UEdGraphPin* UpstreamPin = Pin->LinkedTo[0];
+				UEdGraphNode* Upstream = UpstreamPin ? UpstreamPin->GetOwningNodeUnchecked() : nullptr;
+				return IsNodeOfClass(Upstream, ParameterMapSetClassName) ? Upstream : nullptr;
+			}
+			return nullptr;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> SerializeModuleInputs(
+			const UNiagaraNodeFunctionCall* ModuleNode,
+			const FNiagaraInspectOptions& Options,
+			int32 Depth);
+
+		/** Describes what an override pin's value resolves to, following one link. */
+		void DescribeOverrideSource(
+			const UEdGraphPin* OverridePin,
+			const FNiagaraInspectOptions& Options,
+			int32 Depth,
+			const TSharedRef<FJsonObject>& OutJson)
+		{
+			if (OverridePin->LinkedTo.Num() == 0)
+			{
+				// No link: the pin holds the value inline. This is the common "typed a number" case.
+				OutJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::Literal));
+				OutJson->SetStringField(TEXT("value"), OverridePin->DefaultValue);
+				return;
+			}
+
+			const UEdGraphPin* SourcePin = OverridePin->LinkedTo[0];
+			UEdGraphNode* SourceNode = SourcePin ? SourcePin->GetOwningNodeUnchecked() : nullptr;
+			if (!SourceNode)
+			{
+				OutJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::Unknown));
+				return;
+			}
+
+			if (IsNodeOfClass(SourceNode, ParameterMapGetClassName))
+			{
+				// The get node's output pin is named for the parameter it reads, which is exactly the
+				// "is this wired to User.PhaseDuration or typed in?" question.
+				OutJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::Linked));
+				OutJson->SetStringField(TEXT("linked_parameter"), SourcePin->PinName.ToString());
+				return;
+			}
+
+			if (const UNiagaraNodeFunctionCall* DynamicInput = Cast<UNiagaraNodeFunctionCall>(SourceNode))
+			{
+				OutJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::DynamicInput));
+				OutJson->SetStringField(TEXT("dynamic_input"), DynamicInput->GetFunctionName());
+				if (const UNiagaraScript* Script = DynamicInput->FunctionScript)
+				{
+					OutJson->SetStringField(TEXT("dynamic_input_script"), Script->GetPathName());
+				}
+				if (Depth < Options.MaxDynamicInputDepth)
+				{
+					OutJson->SetArrayField(
+						TEXT("inputs"), SerializeModuleInputs(DynamicInput, Options, Depth + 1));
+				}
+				else
+				{
+					OutJson->SetBoolField(TEXT("depth_limited"), true);
+				}
+				return;
+			}
+
+			if (const UNiagaraNodeInput* InputNode = Cast<UNiagaraNodeInput>(SourceNode))
+			{
+				OutJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::DataInterface));
+				OutJson->SetStringField(TEXT("input_name"), InputNode->Input.GetName().ToString());
+
+				// UNiagaraNodeInput::GetDataInterface() is declared without NIAGARAEDITOR_API, so the
+				// object is read reflectively rather than through the accessor.
+				if (const UObject* DataInterface = GetObjectPropertyByName(InputNode, TEXT("DataInterface")))
+				{
+					OutJson->SetStringField(TEXT("data_interface_class"), DataInterface->GetClass()->GetName());
+					OutJson->SetStringField(TEXT("data_interface"), DataInterface->GetPathName());
+					if (Options.bIncludeCurves)
+					{
+						const TSharedPtr<FJsonObject> Curves = SerializeCurvesOn(DataInterface);
+						if (Curves->Values.Num() > 0)
+						{
+							OutJson->SetObjectField(TEXT("curves"), Curves);
+						}
+					}
+				}
+				return;
+			}
+
+			// UNiagaraNodeCustomHlsl and anything else the graph allows here.
+			OutJson->SetStringField(
+				TEXT("source"),
+				SourceNode->GetClass()->GetName().Contains(TEXT("CustomHlsl"))
+					? InputSourceKindToString(EInputSourceKind::Expression)
+					: InputSourceKindToString(EInputSourceKind::Unknown));
+			OutJson->SetStringField(TEXT("source_node_class"), SourceNode->GetClass()->GetName());
+		}
+
+		TArray<TSharedPtr<FJsonValue>> SerializeModuleInputs(
+			const UNiagaraNodeFunctionCall* ModuleNode,
+			const FNiagaraInspectOptions& Options,
+			int32 Depth)
+		{
+			TArray<TSharedPtr<FJsonValue>> InputsJson;
+			if (!ModuleNode)
+			{
+				return InputsJson;
+			}
+
+			// Overrides are keyed by the aliased handle "<ModuleName>.<Input>".
+			const FString OverridePrefix = ModuleNode->GetFunctionName() + TEXT(".");
+			TMap<FString, const UEdGraphPin*> OverridesByInput;
+			if (const UEdGraphNode* OverrideNode = FindOverrideNode(ModuleNode))
+			{
+				for (const UEdGraphPin* Pin : OverrideNode->Pins)
+				{
+					if (!Pin || Pin->Direction != EGPD_Input)
+					{
+						continue;
+					}
+					const FString PinName = Pin->PinName.ToString();
+					if (PinName.StartsWith(OverridePrefix))
+					{
+						OverridesByInput.Add(PinName.RightChop(OverridePrefix.Len()), Pin);
+					}
+				}
+			}
+
+			// Iterate the module's own input pins so inputs left at their default are reported too --
+			// "not set" is an answer, and an input missing from the payload is not.
+			for (const UEdGraphPin* Pin : ModuleNode->Pins)
+			{
+				if (!Pin || Pin->Direction != EGPD_Input || IsParameterMapPin(Pin))
+				{
+					continue;
+				}
+
+				const FString InputName = Pin->PinName.ToString();
+				TSharedRef<FJsonObject> InputJson = MakeShared<FJsonObject>();
+				InputJson->SetStringField(TEXT("name"), InputName);
+				if (const UObject* SubCategory = Pin->PinType.PinSubCategoryObject.Get())
+				{
+					InputJson->SetStringField(TEXT("type"), SubCategory->GetName());
+				}
+
+				if (const UEdGraphPin* const* OverridePin = OverridesByInput.Find(InputName))
+				{
+					DescribeOverrideSource(*OverridePin, Options, Depth, InputJson);
+				}
+				else
+				{
+					InputJson->SetStringField(TEXT("source"), InputSourceKindToString(EInputSourceKind::Default));
+					InputJson->SetStringField(TEXT("value"), Pin->DefaultValue);
+				}
+
+				InputsJson.Add(MakeShared<FJsonValueObject>(InputJson));
+			}
+
+			return InputsJson;
 		}
 
 		TSharedPtr<FJsonObject> SerializeBox(const FBox& Box)
@@ -163,6 +424,52 @@ namespace NiagaraStackSerializer
 				TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
 				Json->SetStringField(TEXT("class"), Renderer->GetClass()->GetName());
 				Json->SetBoolField(TEXT("enabled"), Renderer->GetIsEnabled());
+
+				// Walked reflectively rather than per renderer class: UNiagaraRendererProperties
+				// declares no common accessor for either, the material property is named differently
+				// on each subclass, and the binding set differs by renderer type. GetUsedMaterials()
+				// is the runtime path and needs a live emitter instance, which an asset read has not
+				// got. The material path in particular is the field that says which shader actually
+				// consumes the particle attributes this emitter writes.
+				TArray<TSharedPtr<FJsonValue>> MaterialsJson;
+				TArray<TSharedPtr<FJsonValue>> BindingsJson;
+				for (TFieldIterator<FProperty> It(Renderer->GetClass()); It; ++It)
+				{
+					if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(*It))
+					{
+						if (ObjectProperty->PropertyClass
+							&& ObjectProperty->PropertyClass->IsChildOf(UMaterialInterface::StaticClass()))
+						{
+							if (const UObject* Material = ObjectProperty->GetObjectPropertyValue_InContainer(Renderer))
+							{
+								TSharedPtr<FJsonObject> MaterialJson = MakeShared<FJsonObject>();
+								MaterialJson->SetStringField(TEXT("property"), It->GetName());
+								MaterialJson->SetStringField(TEXT("material"), Material->GetPathName());
+								MaterialsJson.Add(MakeShared<FJsonValueObject>(MaterialJson));
+							}
+						}
+						continue;
+					}
+
+					const FStructProperty* StructProperty = CastField<FStructProperty>(*It);
+					if (!StructProperty || StructProperty->Struct != FNiagaraVariableAttributeBinding::StaticStruct())
+					{
+						continue;
+					}
+					const FNiagaraVariableAttributeBinding* Binding =
+						StructProperty->ContainerPtrToValuePtr<FNiagaraVariableAttributeBinding>(Renderer);
+					if (!Binding)
+					{
+						continue;
+					}
+					TSharedPtr<FJsonObject> BindingJson = MakeShared<FJsonObject>();
+					BindingJson->SetStringField(TEXT("name"), StructProperty->GetName());
+					BindingJson->SetStringField(TEXT("bound_to"), Binding->GetName().ToString());
+					BindingsJson.Add(MakeShared<FJsonValueObject>(BindingJson));
+				}
+				Json->SetArrayField(TEXT("materials"), MaterialsJson);
+				Json->SetArrayField(TEXT("bindings"), BindingsJson);
+
 				RenderersJson.Add(MakeShared<FJsonValueObject>(Json));
 			}
 			return RenderersJson;
@@ -212,7 +519,7 @@ namespace NiagaraStackSerializer
 				}
 
 				TArray<TSharedPtr<FJsonValue>> ModulesJson =
-					SerializeStack(OutputNode, Options.bIncludeDisabledModules);
+					SerializeStack(OutputNode, Options);
 
 				switch (Usage)
 				{
@@ -362,6 +669,20 @@ FString NiagaraStackSerializer::SimTargetToString(ENiagaraSimTarget SimTarget)
 	}
 }
 
+FString NiagaraStackSerializer::InputSourceKindToString(EInputSourceKind Kind)
+{
+	switch (Kind)
+	{
+	case EInputSourceKind::Default:			return TEXT("default");
+	case EInputSourceKind::Literal:			return TEXT("literal");
+	case EInputSourceKind::Linked:			return TEXT("linked");
+	case EInputSourceKind::DynamicInput:	return TEXT("dynamic_input");
+	case EInputSourceKind::DataInterface:	return TEXT("data_interface");
+	case EInputSourceKind::Expression:		return TEXT("expression");
+	default:								return TEXT("unknown");
+	}
+}
+
 FString NiagaraStackSerializer::EmitterModeToString(ENiagaraEmitterMode Mode)
 {
 	switch (Mode)
@@ -489,16 +810,41 @@ TSharedPtr<FJsonObject> NiagaraStackSerializer::SerializeSystem(
 	SystemJson->SetNumberField(TEXT("warmup_time"), System->GetWarmupTime());
 	SystemJson->SetNumberField(TEXT("warmup_tick_count"), System->GetWarmupTickCount());
 	SystemJson->SetNumberField(TEXT("warmup_tick_delta"), System->GetWarmupTickDelta());
-	if (const UNiagaraEffectType* EffectType = System->GetEffectType())
+	// Emitted even when unset: an absent key cannot be told apart from a field the tool does
+	// not support, and "no effect type" is a real scalability answer.
+	const UNiagaraEffectType* EffectType = System->GetEffectType();
+	if (EffectType)
 	{
 		SystemJson->SetStringField(TEXT("effect_type"), EffectType->GetPathName());
 	}
+	else
+	{
+		SystemJson->SetField(TEXT("effect_type"), MakeShared<FJsonValueNull>());
+	}
 
+	// UNiagaraSystem::GetFixedBounds() returns FixedBounds unconditionally -- it does not consult
+	// bFixedBounds. Emitting the box gated only on IsValid therefore reported a stale, disabled box
+	// as though it were in force, which is a wrong answer rather than a missing field. The flag is
+	// always reported so the box can be interpreted.
+	SystemJson->SetBoolField(TEXT("fixed_bounds_enabled"), System->bFixedBounds != 0);
 	const FBox FixedBounds = System->GetFixedBounds();
 	if (FixedBounds.IsValid != 0)
 	{
 		SystemJson->SetObjectField(TEXT("fixed_bounds"), Internal::SerializeBox(FixedBounds));
 	}
+
+	// Distance culling is the setting most often blamed for "the effect vanishes"; without it an
+	// agent cannot tell a culled system from a broken one.
+	const FNiagaraSystemScalabilitySettings& Scalability = System->GetScalabilitySettings();
+	TSharedRef<FJsonObject> ScalabilityJson = MakeShared<FJsonObject>();
+	ScalabilityJson->SetBoolField(TEXT("cull_by_distance"), Scalability.bCullByDistance != 0);
+	ScalabilityJson->SetNumberField(TEXT("max_distance"), Scalability.MaxDistance);
+	ScalabilityJson->SetBoolField(TEXT("cull_by_max_instance_count"), Scalability.bCullMaxInstanceCount != 0);
+	ScalabilityJson->SetNumberField(TEXT("max_instances"), Scalability.MaxInstances);
+	ScalabilityJson->SetBoolField(
+		TEXT("cull_by_max_system_instance_count"), Scalability.bCullPerSystemMaxInstanceCount != 0);
+	ScalabilityJson->SetNumberField(TEXT("max_system_instances"), Scalability.MaxSystemInstances);
+	SystemJson->SetObjectField(TEXT("scalability"), ScalabilityJson);
 
 	const TArray<FNiagaraEmitterHandle>& EmitterHandles = System->GetEmitterHandles();
 	SystemJson->SetNumberField(TEXT("emitter_count"), EmitterHandles.Num());
@@ -516,7 +862,7 @@ TSharedPtr<FJsonObject> NiagaraStackSerializer::SerializeSystem(
 			{
 				SystemStackJson->SetArrayField(
 					ScriptUsageToStageName(Usage),
-					Internal::SerializeStack(OutputNode, Options.bIncludeDisabledModules));
+					Internal::SerializeStack(OutputNode, Options));
 			}
 		}
 		Result->SetObjectField(TEXT("system_stack"), SystemStackJson);

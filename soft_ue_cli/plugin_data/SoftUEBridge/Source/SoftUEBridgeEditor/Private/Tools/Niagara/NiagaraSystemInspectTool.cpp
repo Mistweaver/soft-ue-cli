@@ -94,6 +94,23 @@ TMap<FString, FBridgeSchemaProperty> UNiagaraSystemInspectTool::GetInputSchema()
 		TEXT("include_disabled_modules"),
 		NiagaraSystemInspectSchemaProperty(
 			TEXT("boolean"), TEXT("Include stack modules whose node is disabled (default true)")));
+	Schema.Add(
+		TEXT("include_module_inputs"),
+		NiagaraSystemInspectSchemaProperty(
+			TEXT("boolean"),
+			TEXT("Include every module input with where its value comes from: default, literal, "
+				 "linked (with the parameter path), dynamic_input (with its own nested inputs), "
+				 "data_interface, or expression. Off by default -- this is the expensive part")));
+	Schema.Add(
+		TEXT("include_curves"),
+		NiagaraSystemInspectSchemaProperty(
+			TEXT("boolean"),
+			TEXT("Include curve keys (time, value, interp) for curves reached through a module "
+				 "input. Implies include_module_inputs")));
+	Schema.Add(
+		TEXT("max_dynamic_input_depth"),
+		NiagaraSystemInspectSchemaProperty(
+			TEXT("integer"), TEXT("How far to recurse into nested dynamic inputs (default 3)")));
 	return Schema;
 }
 
@@ -120,6 +137,13 @@ FBridgeToolResult UNiagaraSystemInspectTool::Execute(
 	Options.bIncludeRenderers = GetBoolArgOrDefault(Arguments, TEXT("include_renderers"), true);
 	Options.bIncludeParameters = GetBoolArgOrDefault(Arguments, TEXT("include_parameters"), true);
 	Options.bIncludeDisabledModules = GetBoolArgOrDefault(Arguments, TEXT("include_disabled_modules"), true);
+	// Opt-in, unlike the rest: the input walk visits every module's override node and every dynamic
+	// input beneath it, which is a different order of cost from listing the stack.
+	Options.bIncludeCurves = GetBoolArgOrDefault(Arguments, TEXT("include_curves"), false);
+	Options.bIncludeModuleInputs =
+		GetBoolArgOrDefault(Arguments, TEXT("include_module_inputs"), false) || Options.bIncludeCurves;
+	Options.MaxDynamicInputDepth = FMath::Clamp(
+		GetIntArgOrDefault(Arguments, TEXT("max_dynamic_input_depth"), 3), 0, 16);
 
 	FString Error;
 	UNiagaraSystem* System = NiagaraSystemInspectLoadSystem(AssetPath, Error);

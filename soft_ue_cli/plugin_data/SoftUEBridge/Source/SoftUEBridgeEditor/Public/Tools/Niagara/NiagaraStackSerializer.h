@@ -43,7 +43,38 @@ namespace NiagaraStackSerializer
 
 		/** Include stack modules whose node is disabled. They are still part of what the window shows. */
 		bool bIncludeDisabledModules = true;
+
+		/**
+		 * Include each module's input values and, for every one, where the value comes from. Off by
+		 * default: it walks each module's override node and every dynamic input hanging off it, so
+		 * it is the most expensive part of an inspection by a wide margin.
+		 */
+		bool bIncludeModuleInputs = false;
+
+		/** Include the keys of any curve reached through a module input. Implies bIncludeModuleInputs. */
+		bool bIncludeCurves = false;
+
+		/** How far to recurse into nested dynamic inputs before reporting the node and stopping. */
+		int32 MaxDynamicInputDepth = 3;
 	};
+
+	/**
+	 * Where a module input's value comes from. Knowing the value alone is not enough to act on:
+	 * a literal can be edited in place, a link has to be followed to its parameter, and a dynamic
+	 * input is a whole subtree. An input left at its default has no override pin at all.
+	 */
+	enum class EInputSourceKind : uint8
+	{
+		Default,
+		Literal,
+		Linked,
+		DynamicInput,
+		DataInterface,
+		Expression,
+		Unknown,
+	};
+
+	FString InputSourceKindToString(EInputSourceKind Kind);
 
 	/**
 	 * Stage label matching the Niagara stack's own section headings ("ParticleSpawn",
