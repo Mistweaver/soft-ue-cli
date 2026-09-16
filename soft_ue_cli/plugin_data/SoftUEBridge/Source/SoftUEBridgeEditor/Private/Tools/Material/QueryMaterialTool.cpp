@@ -12,6 +12,9 @@
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionStaticBoolParameter.h"
 #include "Materials/MaterialFunction.h"
+#include "Materials/MaterialAttributeDefinitionMap.h"
+#include "MaterialExpressionIO.h"
+#include "SceneTypes.h"
 #include "Tools/BridgeToolResult.h"
 #include "SoftUEBridgeEditorModule.h"
 
@@ -98,6 +101,9 @@ FBridgeToolResult UQueryMaterialTool::Execute(
 	if (MatInstance)
 	{
 		Result->SetStringField(TEXT("asset_type"), TEXT("MaterialInstance"));
+		// An instance answers "is this Unlit?" as well as a base material does, and that is
+		// usually the asset a renderer actually points at.
+		Result->SetObjectField(TEXT("settings"), ExtractMaterialSettings(MatInstance));
 		if (MatInstance->Parent)
 		{
 			Result->SetStringField(TEXT("parent_material"), MatInstance->Parent->GetPathName());
@@ -166,6 +172,9 @@ FBridgeToolResult UQueryMaterialTool::Execute(
 	}
 
 	Result->SetStringField(TEXT("asset_type"), TEXT("Material"));
+	// Always emitted, not gated behind include=graph: "is this Unlit?" is a question about the
+	// material, not about its graph, and it was previously only answerable from a raw bitfield.
+	Result->SetObjectField(TEXT("settings"), ExtractMaterialSettings(Material));
 
 	if (bIncludeGraph)
 	{
@@ -212,7 +221,150 @@ TSharedPtr<FJsonObject> UQueryMaterialTool::ExtractGraph(UMaterial* Material, bo
 	GraphJson->SetArrayField(TEXT("expressions"), ExpressionsArray);
 	GraphJson->SetNumberField(TEXT("expression_count"), ExpressionsArray.Num());
 
+	// The root is what makes the expression list readable: without it, "which node feeds
+	// EmissiveColor" can only be inferred, and an inference that lands on the wrong pin reads
+	// exactly like a fact.
+	GraphJson->SetArrayField(TEXT("root_connections"), ExtractRootConnections(Material));
+
 	return GraphJson;
+}
+
+TArray<TSharedPtr<FJsonValue>> UQueryMaterialTool::ExtractRootConnections(UMaterial* Material) const
+{
+	TArray<TSharedPtr<FJsonValue>> ConnectionsArray;
+	if (!Material)
+	{
+		return ConnectionsArray;
+	}
+
+	for (int32 PropertyIndex = 0; PropertyIndex < MP_MAX; ++PropertyIndex)
+	{
+		const EMaterialProperty Property = static_cast<EMaterialProperty>(PropertyIndex);
+
+		// MP_MaterialAttributes and MP_CustomOutput are not simple pin inputs, and the deprecated
+		// entries no longer resolve; GetExpressionInputForProperty returns null for all of them.
+		FExpressionInput* Input = Material->GetExpressionInputForProperty(Property);
+		if (!Input)
+		{
+			continue;
+		}
+
+		const FString PropertyName = FMaterialAttributeDefinitionMap::GetAttributeName(Property);
+		if (PropertyName.IsEmpty())
+		{
+			continue;
+		}
+
+		// Follow reroute nodes: a knot between the expression and the root would otherwise be
+		// reported as the source, which is not a node the reader can act on.
+		const FExpressionInput TracedInput = Input->GetTracedInput();
+
+		TSharedPtr<FJsonObject> ConnectionJson = MakeShareable(new FJsonObject);
+		ConnectionJson->SetStringField(TEXT("property"), PropertyName);
+		ConnectionJson->SetBoolField(TEXT("connected"), TracedInput.Expression != nullptr);
+
+		if (TracedInput.Expression)
+		{
+			ConnectionJson->SetStringField(TEXT("expression"), TracedInput.Expression->GetName());
+			ConnectionJson->SetStringField(TEXT("expression_class"), TracedInput.Expression->GetClass()->GetName());
+			ConnectionJson->SetNumberField(TEXT("output_index"), TracedInput.OutputIndex);
+			ConnectionJson->SetStringField(
+				TEXT("expression_guid"),
+				TracedInput.Expression->MaterialExpressionGuid.ToString(EGuidFormats::DigitsWithHyphens));
+		}
+
+		ConnectionsArray.Add(MakeShareable(new FJsonValueObject(ConnectionJson)));
+	}
+
+	return ConnectionsArray;
+}
+
+namespace
+{
+	// `QueryMaterial`-prefixed to stay unity-blob safe: at file scope every .cpp folded into one
+	// translation unit shares a single anonymous namespace, and a helper called StripEnumPrefix
+	// is exactly the name a neighbouring tool would also pick.
+
+	/**
+	 * Enum entry name without its UE prefix. The report this answers asked for "Unlit", not
+	 * "MSM_Unlit" -- the point of resolving the bitfield is that a reader should not have to decode
+	 * anything, and a prefix is one more thing to strip before comparing.
+	 */
+	template <typename TEnum>
+	FString QueryMaterialStripEnumPrefix(TEnum Value, const TCHAR* Prefix)
+	{
+		const UEnum* Enum = StaticEnum<TEnum>();
+		if (!Enum)
+		{
+			return TEXT("Unknown");
+		}
+		FString Name = Enum->GetNameStringByValue(static_cast<int64>(Value));
+		Name.RemoveFromStart(Prefix);
+		return Name.IsEmpty() ? TEXT("Unknown") : Name;
+	}
+
+	FString QueryMaterialShadingModelName(EMaterialShadingModel Model)
+	{
+		return QueryMaterialStripEnumPrefix<EMaterialShadingModel>(Model, TEXT("MSM_"));
+	}
+}
+
+TSharedPtr<FJsonObject> UQueryMaterialTool::ExtractMaterialSettings(UMaterialInterface* Material) const
+{
+	TSharedPtr<FJsonObject> SettingsJson = MakeShareable(new FJsonObject);
+	if (!Material)
+	{
+		return SettingsJson;
+	}
+
+	const FMaterialShadingModelField ShadingModels = Material->GetShadingModels();
+
+	// GetFirstShadingModel() opens with check(IsValid()), so an empty or malformed field would take
+	// the editor down rather than report.
+	if (ShadingModels.IsValid())
+	{
+		const EMaterialShadingModel FirstModel = ShadingModels.GetFirstShadingModel();
+		SettingsJson->SetStringField(TEXT("shading_model"), QueryMaterialShadingModelName(FirstModel));
+
+		// A material can carry more than one shading model (a From Material Expression setup, or a
+		// Substrate material), in which case naming only the first would be a half-truth.
+		TArray<TSharedPtr<FJsonValue>> AllModelsJson;
+		for (int32 ModelIndex = 0; ModelIndex < MSM_NUM; ++ModelIndex)
+		{
+			const EMaterialShadingModel Model = static_cast<EMaterialShadingModel>(ModelIndex);
+			if (ShadingModels.HasShadingModel(Model))
+			{
+				AllModelsJson.Add(MakeShareable(new FJsonValueString(QueryMaterialShadingModelName(Model))));
+			}
+		}
+		SettingsJson->SetArrayField(TEXT("shading_models"), AllModelsJson);
+		SettingsJson->SetNumberField(TEXT("shading_model_count"), ShadingModels.CountShadingModels());
+	}
+	else
+	{
+		SettingsJson->SetStringField(TEXT("shading_model"), TEXT("Unknown"));
+	}
+
+	// Declared on UMaterial only; an instance reports what its base material does.
+	if (const UMaterial* BaseMaterial = Material->GetMaterial())
+	{
+		SettingsJson->SetBoolField(
+			TEXT("shading_model_from_expression"),
+			BaseMaterial->IsShadingModelFromMaterialExpression());
+	}
+
+	SettingsJson->SetStringField(
+		TEXT("blend_mode"), QueryMaterialStripEnumPrefix<EBlendMode>(Material->GetBlendMode(), TEXT("BLEND_")));
+	// MaterialDomain is declared on UMaterial, not the interface; an instance answers for its base.
+	if (const UMaterial* BaseMaterial = Material->GetMaterial())
+	{
+		SettingsJson->SetStringField(
+			TEXT("material_domain"),
+			QueryMaterialStripEnumPrefix<EMaterialDomain>(BaseMaterial->MaterialDomain, TEXT("MD_")));
+	}
+	SettingsJson->SetBoolField(TEXT("two_sided"), Material->IsTwoSided());
+
+	return SettingsJson;
 }
 
 TSharedPtr<FJsonObject> UQueryMaterialTool::ExpressionToJson(UMaterialExpression* Expression, bool bIncludePositions) const
