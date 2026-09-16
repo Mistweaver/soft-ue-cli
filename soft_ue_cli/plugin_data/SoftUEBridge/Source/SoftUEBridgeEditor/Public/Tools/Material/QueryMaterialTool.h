@@ -36,6 +36,20 @@ private:
 	/** Extract material expression graph */
 	TSharedPtr<FJsonObject> ExtractGraph(class UMaterial* Material, bool bIncludePositions) const;
 
+	/**
+	 * What each material output property (BaseColor, EmissiveColor, Opacity, ...) is wired to.
+	 * Without this the graph is a bag of expressions with no root, and the wiring has to be guessed
+	 * from output indices.
+	 */
+	TArray<TSharedPtr<FJsonValue>> ExtractRootConnections(class UMaterial* Material) const;
+
+	/**
+	 * Shading model and blend mode as resolved strings. The underlying shading model is a bitmask
+	 * whose bit N means shading model N, so the raw field reads as an off-by-one version of the
+	 * enum and is easy to decode backwards.
+	 */
+	TSharedPtr<FJsonObject> ExtractMaterialSettings(class UMaterialInterface* Material) const;
+
 	/** Convert expression to JSON */
 	TSharedPtr<FJsonObject> ExpressionToJson(class UMaterialExpression* Expression, bool bIncludePositions) const;
 
