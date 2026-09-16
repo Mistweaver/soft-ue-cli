@@ -91,6 +91,14 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "ChaosClothAssetEditor",
+			"Enabled": true,
+			"Optional": true,
+			"TargetAllowList": [
+				"Editor"
+			]
 		}
 	],
 	"Modules": [
