@@ -578,7 +578,7 @@ def test_tool_count_is_reasonable():
     """Should have a stable, non-trivial tool count after exclusions."""
     tools = extract_tools()
     assert len(tools) >= 60
-    assert len(tools) <= 260
+    assert len(tools) <= 265
 
 
 def test_skeletal_socket_tools_are_exposed():
@@ -649,6 +649,30 @@ def test_rig_leaf_commands_are_exposed_to_mcp():
         assert name in tools, f"{name} missing from MCP surface"
         assert "asset_path" in tools[name]["parameters"]["properties"]
         assert "asset_path" in tools[name]["parameters"].get("required", [])
+
+
+def test_niagara_leaf_command_is_exposed_to_mcp():
+    # A family absent from EXCLUDED_COMMANDS is emitted as a bare, subcommand-less tool and its
+    # leaves never appear, so the MCP surface would offer an unusable `niagara` and hide the
+    # command that does the work.
+    tools = {tool["name"]: tool for tool in extract_tools()}
+
+    assert "niagara" not in tools
+    assert "niagara system" not in tools
+    assert "niagara system inspect" in tools
+
+    params = tools["niagara system inspect"]["parameters"]
+    assert "asset_path" in params["properties"]
+    assert "asset_path" in params.get("required", [])
+
+
+def test_niagara_system_inspect_opt_out_flags_are_optional():
+    tool = next(t for t in extract_tools() if t["name"] == "niagara system inspect")
+    params = tool["parameters"]
+
+    for flag in ("no_modules", "no_renderers", "no_parameters", "skip_disabled_modules"):
+        assert flag in params["properties"]
+        assert flag not in params.get("required", [])
 
 
 def test_rig_inspect_transforms_choice_is_exposed_with_default():

@@ -1056,6 +1056,29 @@ def cmd_rig_graph_inspect(args: argparse.Namespace) -> None:
     _print_json(_run_tool("rig-graph-inspect", arguments))
 
 
+def cmd_niagara_system_inspect(args: argparse.Namespace) -> None:
+    arguments: dict = {"asset_path": _fix_msys_asset_path(args.asset_path)}
+    if args.emitter:
+        arguments["emitter"] = args.emitter
+    # The bridge tool defaults each of these to true, so only the opt-outs are forwarded.
+    if args.no_modules:
+        arguments["include_modules"] = False
+    if args.no_renderers:
+        arguments["include_renderers"] = False
+    if args.no_parameters:
+        arguments["include_parameters"] = False
+    if args.skip_disabled_modules:
+        arguments["include_disabled_modules"] = False
+    # Opt-in on the bridge side, so these are forwarded only when asked for.
+    if args.include_module_inputs:
+        arguments["include_module_inputs"] = True
+    if args.include_curves:
+        arguments["include_curves"] = True
+    if args.max_dynamic_input_depth is not None:
+        arguments["max_dynamic_input_depth"] = args.max_dynamic_input_depth
+    _print_json(_run_tool("niagara-system-inspect", arguments))
+
+
 def cmd_delete_asset(args: argparse.Namespace) -> None:
     _print_json(_run_tool("delete-asset", {"asset_path": args.asset_path}))
 
@@ -7013,6 +7036,85 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_rig_graph_inspect.add_argument("--include-pins", action="store_true", help="Include pin data on every node")
     p_rig_graph_inspect.add_argument("--include-links", action="store_true", help="Include the graph link list")
     p_rig_graph_inspect.set_defaults(func=cmd_rig_graph_inspect)
+
+    p_niagara = sub.add_parser(
+        "niagara",
+        help="Canonical Niagara inspection command family.",
+        description=(
+            "Canonical Niagara System inspection family.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli niagara system inspect /Game/FX/NS_Fire"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    niagara_sub = p_niagara.add_subparsers(dest="niagara_action", required=True)
+
+    p_niagara_system = niagara_sub.add_parser(
+        "system",
+        help="Niagara System commands.",
+        description=(
+            "Niagara System inspection commands.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli niagara system inspect /Game/FX/NS_Fire"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    niagara_system_sub = p_niagara_system.add_subparsers(dest="niagara_system_action", required=True)
+
+    p_niagara_system_inspect = niagara_system_sub.add_parser(
+        "inspect",
+        help="Read a Niagara System the way its editor window presents it.",
+        description=(
+            "Read a Niagara System through the niagara-system-inspect bridge tool.\n"
+            "Returns the system settings, every emitter with its sim target and bounds/allocation\n"
+            "modes, the ordered module stack for each script stage (SystemSpawn/SystemUpdate,\n"
+            "EmitterSpawn/EmitterUpdate, ParticleSpawn/ParticleUpdate, simulation stages and event\n"
+            "handlers), each emitter's renderers, and the user-exposed parameters with their values.\n"
+            "Reads the asset, so no Niagara editor window has to be open.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli niagara system inspect /Game/FX/NS_Fire\n"
+            "  soft-ue-cli niagara system inspect /Game/FX/NS_Fire --emitter Smoke\n"
+            "  soft-ue-cli niagara system inspect /Game/FX/NS_Fire --no-modules --no-renderers"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_niagara_system_inspect.add_argument("asset_path", help="Niagara System asset path (e.g., /Game/FX/NS_Fire)")
+    p_niagara_system_inspect.add_argument("--emitter", metavar="NAME", help="Only inspect the named emitter")
+    p_niagara_system_inspect.add_argument(
+        "--no-modules", action="store_true", help="Skip the per-stage module stacks (the graph walk)"
+    )
+    p_niagara_system_inspect.add_argument(
+        "--no-renderers", action="store_true", help="Skip each emitter's renderer list"
+    )
+    p_niagara_system_inspect.add_argument(
+        "--no-parameters", action="store_true", help="Skip the user-exposed parameters"
+    )
+    p_niagara_system_inspect.add_argument(
+        "--skip-disabled-modules",
+        action="store_true",
+        help="Omit stack modules whose node is disabled (they are included by default)",
+    )
+    p_niagara_system_inspect.add_argument(
+        "--include-module-inputs",
+        action="store_true",
+        help=(
+            "Include every module input and where its value comes from: default, literal, linked "
+            "(with the parameter path), dynamic_input (with nested inputs), data_interface, or "
+            "expression"
+        ),
+    )
+    p_niagara_system_inspect.add_argument(
+        "--include-curves",
+        action="store_true",
+        help="Include curve keys for curves reached through a module input (implies --include-module-inputs)",
+    )
+    p_niagara_system_inspect.add_argument(
+        "--max-dynamic-input-depth",
+        type=int,
+        metavar="N",
+        help="How far to recurse into nested dynamic inputs (default 3)",
+    )
+    p_niagara_system_inspect.set_defaults(func=cmd_niagara_system_inspect)
 
     p_cus = sub.add_parser(
         "compare-umg-screenshot",
