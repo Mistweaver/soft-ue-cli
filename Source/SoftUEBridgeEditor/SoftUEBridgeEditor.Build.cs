@@ -105,6 +105,15 @@ public class SoftUEBridgeEditor : ModuleRules
 			"MetasoundFrontend",
 			"MetasoundEngine",
 
+			// Niagara (read-only system, emitter, and module-stack inspection). Niagara carries
+			// UNiagaraSystem and the emitter data; NiagaraEditor carries UNiagaraScriptSource and the
+			// graph node classes. Note that most of FNiagaraStackGraphUtilities is declared without
+			// NIAGARAEDITOR_API, so NiagaraStackSerializer walks the stack through UEdGraph instead
+			// of calling GetOrderedModuleNodes, which would compile but not link.
+			"Niagara",
+			"NiagaraCore",
+			"NiagaraEditor",
+
 			// Python Scripting
 			"PythonScriptPlugin",
 

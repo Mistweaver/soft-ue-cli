@@ -191,37 +191,104 @@ FBridgeToolResult UEditorSetPropertyTool::Execute(
 					}
 				}
 
-				// If not found in ICH, try to create an override for an inherited component
+				// Not overridden yet. An inherited component reaches the child in one of two ways, and
+				// they need opposite handling -- the previous code assumed the first and gave up.
 				if (!bFoundComponent)
 				{
-					// Look for the component in parent class CDO
-					UClass* ParentClass = Blueprint->ParentClass;
-					if (ParentClass)
+					// (1) Declared by a USCS_Node in some ancestor Blueprint. Overriding it means
+					// asking the InheritableComponentHandler for a template keyed to that node.
+					// FComponentKey can only be built from an SCS node or a UCS component id, so the
+					// node itself has to be found first -- it may be several Blueprints up.
+					USCS_Node* InheritedNode = nullptr;
+					for (UClass* Ancestor = Blueprint->ParentClass; Ancestor; Ancestor = Ancestor->GetSuperClass())
 					{
-						if (AActor* ParentCDO = Cast<AActor>(ParentClass->GetDefaultObject()))
+						UBlueprintGeneratedClass* AncestorBPGC = Cast<UBlueprintGeneratedClass>(Ancestor);
+						if (!AncestorBPGC || !AncestorBPGC->SimpleConstructionScript)
 						{
-							TArray<UActorComponent*> ParentComponents;
-							ParentCDO->GetComponents(ParentComponents);
-							for (UActorComponent* Comp : ParentComponents)
+							continue;
+						}
+						for (USCS_Node* Node : AncestorBPGC->SimpleConstructionScript->GetAllNodes())
+						{
+							if (Node && Node->ComponentTemplate && Node->GetVariableName().ToString() == ComponentName)
 							{
-								if (Comp && Comp->GetName() == ComponentName)
-								{
-									// Found in parent - we need to create an override
-									// This is a complex operation that requires the InheritableComponentHandler
-									UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("set-property: Component '%s' found in parent, creating override"), *ComponentName);
+								InheritedNode = Node;
+								break;
+							}
+						}
+						if (InheritedNode)
+						{
+							break;
+						}
+					}
 
-									UInheritableComponentHandler* ICH2 = Blueprint->GetInheritableComponentHandler(true);
-									if (ICH2)
+					if (InheritedNode)
+					{
+						UInheritableComponentHandler* ICH2 = Blueprint->GetInheritableComponentHandler(true);
+						const FComponentKey ComponentKey(InheritedNode);
+						if (ICH2 && ComponentKey.IsValid())
+						{
+							Blueprint->Modify();
+							// Ask before creating: a template may already exist under a name that did
+							// not match the GetAllTemplates scan above, and creating a second one for
+							// the same key would leave the Blueprint with a duplicate override.
+							UActorComponent* OverrideTemplate = ICH2->GetOverridenComponentTemplate(ComponentKey);
+							if (!OverrideTemplate)
+							{
+								ICH2->Modify();
+								OverrideTemplate = ICH2->CreateOverridenComponentTemplate(ComponentKey);
+								UE_LOG(LogSoftUEBridgeEditor, Log,
+									TEXT("set-property: created inherited-component override for '%s'"),
+									*ComponentName);
+							}
+
+							if (OverrideTemplate)
+							{
+								ComponentTemplate = OverrideTemplate;
+								TargetObject = OverrideTemplate;
+								DefaultComponent = InheritedNode->ComponentTemplate;
+								bIsInheritedComponent = true;
+								bFoundComponent = true;
+							}
+						}
+					}
+					else
+					{
+						// (2) A native component created with CreateDefaultSubobject in C++. These
+						// have no SCS node, so no FComponentKey can name them and the ICH plays no
+						// part. The child class's own CDO already owns an instanced subobject for it,
+						// and writing to that is what overriding a native component means.
+						if (AActor* GeneratedCDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject()))
+						{
+							TArray<UActorComponent*> OwnComponents;
+							GeneratedCDO->GetComponents(OwnComponents);
+							for (UActorComponent* Comp : OwnComponents)
+							{
+								if (!Comp || Comp->GetName() != ComponentName)
+								{
+									continue;
+								}
+								ComponentTemplate = Comp;
+								TargetObject = Comp;
+								bIsInheritedComponent = true;
+								bFoundComponent = true;
+
+								if (UClass* ParentClass = Blueprint->ParentClass)
+								{
+									if (AActor* ParentCDO = Cast<AActor>(ParentClass->GetDefaultObject()))
 									{
-										// We need to find the correct FComponentKey for this component
-										// This is tricky as the component may be from an SCS node in a parent Blueprint
-										// For now, return an error indicating manual override creation is needed
-										return FBridgeToolResult::Error(FString::Printf(
-											TEXT("Component '%s' exists in parent class but has no override yet. "
-												"Please manually override the property in the editor first, then use this tool to modify it."),
-											*ComponentName));
+										TArray<UActorComponent*> ParentComponents;
+										ParentCDO->GetComponents(ParentComponents);
+										for (UActorComponent* ParentComp : ParentComponents)
+										{
+											if (ParentComp && ParentComp->GetName() == ComponentName)
+											{
+												DefaultComponent = ParentComp;
+												break;
+											}
+										}
 									}
 								}
+								break;
 							}
 						}
 					}
