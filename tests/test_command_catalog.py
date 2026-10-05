@@ -448,3 +448,29 @@ def test_catalog_can_filter_rig_commands_by_control_rig_plugin():
     names = {entry["name"] for entry in filter_command_metadata(plugin="Control Rig")}
 
     assert {"rig inspect", "rig control get", "rig graph inspect"} <= names
+
+
+def test_catalog_marks_niagara_commands_as_niagara_plugin_tools():
+    family = get_command_metadata("niagara")
+    system = get_command_metadata("niagara system")
+    inspect = get_command_metadata("niagara system inspect")
+
+    assert family["status"] == "canonical"
+    assert family["category"] == "niagara"
+    assert family["required_plugins"][0]["name"] == "Niagara"
+
+    for meta in (family, system, inspect):
+        assert meta["status"] == "canonical"
+        assert meta["layer"] == "bridge"
+        assert meta["category"] == "niagara"
+        assert meta["requires_bridge"] is True
+        assert meta["requires_editor"] is True
+        assert meta["requires_pie"] is False
+
+    assert inspect["required_plugins"][0]["module"] == "NiagaraEditor"
+
+
+def test_catalog_can_filter_niagara_commands_by_niagara_plugin():
+    names = {entry["name"] for entry in filter_command_metadata(plugin="Niagara")}
+
+    assert {"niagara", "niagara system", "niagara system inspect"} <= names
