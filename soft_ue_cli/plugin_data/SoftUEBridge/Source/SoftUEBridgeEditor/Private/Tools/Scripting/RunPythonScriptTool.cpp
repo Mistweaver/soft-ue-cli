@@ -73,7 +73,10 @@ FBridgeToolResult URunPythonScriptTool::Execute(
 	if (!FModuleManager::Get().IsModuleLoaded("PythonScriptPlugin"))
 	{
 		UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("run-python-script: PythonScriptPlugin is not loaded"));
-		return FBridgeToolResult::Error(TEXT("PythonScriptPlugin is not enabled. Enable it in Edit > Plugins > Scripting > Python Editor Script Plugin"));
+		return PluginUnavailable(
+			TEXT("PythonScriptPlugin"),
+			GetToolName(),
+			TEXT("Enable it in Edit > Plugins > Scripting > Python Editor Script Plugin, then restart the editor."));
 	}
 
 	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();

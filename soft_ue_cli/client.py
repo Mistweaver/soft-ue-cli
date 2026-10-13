@@ -273,7 +273,13 @@ def call_tool_ex(
 
     Raises BridgeError on connection errors or tool errors.
     """
-    from .errors import BridgeError, ErrorKind
+    from .errors import (
+        PLUGIN_UNAVAILABLE,
+        BridgeError,
+        ErrorKind,
+        format_plugin_unavailable,
+        parse_structured_error,
+    )
 
     url = get_server_url()
     endpoint = f"{url}/bridge"
@@ -405,7 +411,11 @@ def call_tool_ex(
         content = result.get("content", [])
         msg = content[0].get("text", "unknown error") if content else "unknown error"
         kind = ErrorKind.UNEXPECTED
-        if (
+        details = parse_structured_error(msg)
+        if details and details.get("error_code") == PLUGIN_UNAVAILABLE:
+            kind = ErrorKind.EXPECTED
+            msg = format_plugin_unavailable(details)
+        elif (
             tool_name == "find-references"
             and msg.startswith("find-references node: incomplete_fib_index:")
         ):
@@ -416,6 +426,7 @@ def call_tool_ex(
             tool_name=tool_name,
             arguments=arguments,
             notices=meta.notices,
+            details=details,
         )
 
     # Parse text content as JSON when possible

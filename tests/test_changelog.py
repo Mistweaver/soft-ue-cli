@@ -4,12 +4,10 @@ from pathlib import Path
 CHANGELOG = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
 
 
-def test_changelog_has_one_empty_unreleased_section_and_1450_release_notes():
+def test_changelog_has_one_unreleased_section_and_1450_release_notes():
     content = CHANGELOG.read_text(encoding="utf-8")
 
     assert content.count("## Unreleased") == 1
-    unreleased = content.split("## Unreleased", 1)[1].split("\n## [", 1)[0]
-    assert not unreleased.strip()
 
     release = content.split("## [1.45.0] - 2026-08-03", 1)[1].split("\n## [", 1)[0]
     assert "runtime-supported Chaos legacy cloth weight-map targets" in release

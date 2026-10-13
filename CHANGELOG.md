@@ -4,6 +4,10 @@ All notable changes to soft-ue-cli will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+- The `plugin_unavailable` contract now works end to end. Bridge tools return it as an error result, so the CLI prints the recovery guidance to stderr and exits 1 without a `report-bug` hint, and `mcp-serve` returns `error_code`, `plugin`, `command`, `message`, and `recovery` beside the `error` field.
+- `run-python-script` returns `plugin_unavailable` when PythonScriptPlugin is not loaded, and the Mutable/CustomizableObject edit commands return it when an asset fails to load and no Mutable plugin is enabled.
+
 ## [1.45.0] - 2026-08-03
 
 ### Added

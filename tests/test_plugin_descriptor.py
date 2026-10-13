@@ -344,6 +344,21 @@ def test_bridge_tool_base_has_plugin_unavailable_error_contract():
     assert 'SetStringField(TEXT("command"), CommandName)' in source
     assert 'SetStringField(TEXT("recovery"), Recovery)' in source
     assert "FBridgeToolResult::Json(Result)" in source
+    assert "ToolResult.bIsError = true;" in source
+
+
+def test_optional_plugin_tools_return_plugin_unavailable():
+    python_tool = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Scripting/RunPythonScriptTool.cpp"
+    ).read_text(encoding="utf-8")
+    mutable_tools = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Asset/EditCustomizableObjectGraphTool.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert 'PluginUnavailable(\n\t\t\tTEXT("PythonScriptPlugin")' in python_tool.replace("\r\n", "\n")
+    assert mutable_tools.count("MutableIntrospectionUtils::IsMutablePluginEnabled()") == mutable_tools.count(
+        "FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError)"
+    )
 
 
 def test_umg_preview_lifecycle_tools_are_registered_and_registry_lists_handles():
