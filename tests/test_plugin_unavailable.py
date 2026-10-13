@@ -91,6 +91,7 @@ def test_cli_exits_non_zero_with_recovery_and_no_bug_hint(plugin_unavailable_bri
 
 
 def test_mcp_returns_structured_fields(plugin_unavailable_bridge):
+    pytest.importorskip("mcp")
     server = create_server()
     tool_fn = next(
         tool.fn for tool in server._tool_manager._tools.values() if tool.name == "run-python-script"
