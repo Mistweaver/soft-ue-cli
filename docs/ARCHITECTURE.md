@@ -357,3 +357,147 @@ The fork has 16 pull requests, all merged. None are open and none were closed wi
 | #1 | 2026-04-10 | Fix input validation errors and minor bugs | Commits in `v1.45.0` |
 
 Seven fork commits reached `main` without a pull request: `39bb6ba`, `f12f48c`, `8338d96`, `9b3a476`, `0dc06d7`, `7176eab`, and `2704edc`.
+
+## Bridge HTTP listener
+
+This section records how the bridge HTTP listener behaves at commit `4f1fec7`. It is the baseline for the security work in #33 through #39.
+
+Paths under `Source/` are relative to `soft_ue_cli/plugin_data/SoftUEBridge/`. Paths under `Engine/` refer to the local UE 5.7.4 install and sit outside this repository.[^engine]
+
+### Components
+
+| Piece | Location | Role |
+| --- | --- | --- |
+| `USoftUEBridgeSubsystem` | `Source/SoftUEBridge/Public/Subsystem/SoftUEBridgeSubsystem.h:14` | `UEngineSubsystem` that owns the server, picks the port, and writes `instance.json`. |
+| `FBridgeServer` | `Source/SoftUEBridge/Private/Server/BridgeServer.cpp:69` | Registers the `/bridge` route on the engine `HTTPServer` module and dispatches JSON-RPC. |
+| Engine `HTTPServer` module | `Source/SoftUEBridge/SoftUEBridge.Build.cs:25` | Owns the socket. The plugin opens no listening socket of its own. |
+| CLI discovery | `soft_ue_cli/discovery.py:54` | Resolves the bridge URL. |
+| CLI client | `soft_ue_cli/client.py:269` | Sends JSON-RPC over `httpx`. The MCP server uses the same client (`soft_ue_cli/mcp_server.py:21`, `:187`). |
+
+### Bind address
+
+The plugin intends a loopback bind, but the engine decides the real bind address.
+
+- `USoftUEBridgeSubsystem::StartServer` passes the literal `"127.0.0.1"` to `FBridgeServer::Start` (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:129`). The header default is the same (`Source/SoftUEBridge/Public/Server/BridgeServer.h:24`).
+- `FBridgeServer::Start` uses that address only for a throwaway port probe: it creates a socket, binds `127.0.0.1:<port>`, and closes it (`Source/SoftUEBridge/Private/Server/BridgeServer.cpp:82-104`). It also uses the address in a log line (`:135`).
+- The real listener comes from `FHttpServerModule::GetHttpRouter(ServerPort)` (`Source/SoftUEBridge/Private/Server/BridgeServer.cpp:107`). The bind address is never passed to the engine.
+- The engine reads the address from `GEngineIni`, section `[HTTPServer.Listeners]`, key `DefaultBindAddress`, then applies any `ListenerOverrides=(Port=...,BindAddress=...)` entry for the same port (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpServerConfig.cpp:11-54`).
+- With no ini value, the code default is `"localhost"` (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpServerConfig.h:13`). `"localhost"` maps to `SetLoopbackAddress()`, `"any"` maps to `SetAnyAddress()`, and any other string is parsed as an IP (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpListener.cpp:62-83`).
+- Neither `Engine/Config/BaseEngine.ini` in UE 5.7.4 and 5.8 nor any ini in this repository sets `DefaultBindAddress` or `ListenerOverrides`. The effective default is therefore loopback.
+- A project or platform `DefaultEngine.ini` that sets `DefaultBindAddress=any` (or a port override) exposes the bridge on every interface. The plugin does not detect this. It still logs `http://127.0.0.1:<port>/bridge` (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:139`) and writes `"host": "127.0.0.1"` to `instance.json` (`:210`).
+- `GetHttpRouter` is called without `bFailOnBindFailure`. On a failed bind the engine still returns a router (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpServerModule.cpp:167-178`), so the plugin reports `Running` and writes `instance.json` even when nothing is listening (`Source/SoftUEBridge/Private/Server/BridgeServer.cpp:108-133`).
+- If another engine system already holds a listener on the chosen port, the engine reuses it and the bridge route joins that listener with its bind settings (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpServerModule.cpp:125-151`).
+
+### Port selection
+
+- Default: `8080` (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:187`).
+- Override: the `SOFT_UE_BRIDGE_PORT` environment variable of the Unreal process, read through `FPlatformMisc::GetEnvironmentVariable`. Values that do not parse to a positive integer fall back to 8080 (`:178-188`).
+- No other source exists. The plugin reads no command-line switch, ini key, or project setting for the port.
+- Fallback: `StartServer` tries `Port` through `Port + 9` (10 attempts) and stops early above 65535 (`:118-126`). The availability test is the loopback probe described above. Each failure logs `Port <n> unavailable`, and exhaustion logs an error and leaves the server stopped (`:142-147`).
+- `RestartServer` re-resolves the port (`:172-176`). The editor toolbar calls it and shows the port (`Source/SoftUEBridgeEditor/Private/UI/BridgeToolbarExtension.cpp:155`, `:169`). `StartServer(int32 Port = 8080)` is also `BlueprintCallable` (`Source/SoftUEBridge/Public/Subsystem/SoftUEBridgeSubsystem.h:24`).
+- Multiple instances: the second process on the same machine lands on 8081, and so on. All instances of one project share one `instance.json` (see Instance discovery).
+
+### Authentication
+
+None. The request path performs no token, header, `Origin`, or `Host` check.
+
+- `HandleRequest` dispatches on verb only (`Source/SoftUEBridge/Private/Server/BridgeServer.cpp:153-286`).
+- CORS is fully open. `OPTIONS` returns `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, and `Access-Control-Allow-Headers: Content-Type` (`:156-165`). Every `GET` and JSON-RPC response carries `Access-Control-Allow-Origin: *` (`:198`, `:473`).
+- The caller identity in `params._session` (`id`, `label`, `origin`, `client`, `pid`) is self-asserted and used for session bookkeeping only (`:425-435`).
+- The JSON-RPC error codes are the standard set plus `ServerError = -32000`. No `unauthorized` code exists (`Source/SoftUEBridge/Public/Protocol/BridgeTypes.h:13-20`).
+- The CLI sends no credentials. Its POST carries only the JSON body (`soft_ue_cli/client.py:282-296`).
+
+Reachable tools include `call-function`, `set-property`, `set-config-value`, `set-console-var`, `spawn-actor`, and `trigger-input` in every build that has the module (`Source/SoftUEBridge/Private/SoftUEBridgeModule.cpp:30-46`), plus `exec-console-command` and `run-python-script` in the editor (`Source/SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp:349`, `:377`).
+
+### Request handling
+
+| Item | Behavior | Citation |
+| --- | --- | --- |
+| Route | One route, `/bridge`. No `/health` path exists. | `Source/SoftUEBridge/Private/Server/BridgeServer.cpp:115-119` |
+| `OPTIONS` | CORS preflight, `204 No Content`. | `:156-165` |
+| `GET` | Health JSON: `name`, `version`, `running`, `pid`, `started_at`, `bridge_instance_id`, `tools`, `tool_names`, `module_paths` (plugin binary paths). | `:168-202` |
+| `POST` | JSON-RPC 2.0. Methods: `initialize`, `initialized`, `shutdown`, `tools/list`, `tools/call`. | `:290-310` |
+| Other verbs | `405` with JSON-RPC `InvalidRequest`. | `:204-208` |
+| Empty or invalid body | `400` with `ParseError`. | `:220-231` |
+| Notifications | `202 Accepted`, empty body. | `:262-268` |
+| Body size | No plugin-side limit. The engine reads `Content-Length` bytes as a clamped `int32`. | `Engine/Source/Runtime/Online/HTTPServer/Private/HttpConnectionRequestReadContext.cpp:192-199` |
+| Connection timeouts | Engine: 5 s read/write idle, 15 s keep-alive. | `Engine/Source/Runtime/Online/HTTPServer/Private/HttpConnection.h:252`, `:255` |
+| Execution timeout | None on the server. A slow tool blocks the game thread and every queued request. | `Source/SoftUEBridge/Private/Server/BridgeServer.cpp:240-283` |
+| Client timeout | 30 s default, `SOFT_UE_BRIDGE_TIMEOUT` or `--timeout` overrides; health check 5 s. | `soft_ue_cli/client.py:280`, `:444`; `soft_ue_cli/__main__.py:9762-9763` |
+
+Threading: `HandleRequest` posts every parsed request to the game thread with `AsyncTask(ENamedThreads::GameThread, ...)` (`Source/SoftUEBridge/Private/Server/BridgeServer.cpp:273-283`). Tools marked `SlateTicker` or `PIEWorldTickSafe` run one step later on `FTSTicker::GetCoreTicker()` (`:38-59`). Tool calls run with `GIsRunningUnattendedScript = true` to suppress modal dialogs (`:442`), and Windows SEH faults turn into JSON-RPC errors (`:445-455`). The engine ticks listeners from `FHttpServerModule::Tick` (`Engine/Source/Runtime/Online/HTTPServer/Private/HttpServerModule.cpp:182-194`), which runs on the game thread.[^tick]
+
+In the editor, the subsystem calls `StartAllListeners()` again after `PostPIEStarted` and `ShutdownPIE` to revive listeners that PIE disrupts (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:58-108`).
+
+### Build configurations
+
+Descriptor (`soft_ue_cli/plugin_data/SoftUEBridge/SoftUEBridge.uplugin`):
+
+- `EnabledByDefault: false` (`:16`). A project enables the plugin in its `.uproject`.
+- `SoftUEBridge` module: `Type: DeveloperTool`, `LoadingPhase: Default` (`:105-109`). This module holds the server.
+- `SoftUEBridgeEditor` module: `Type: Editor`, `LoadingPhase: PostEngineInit` (`:110-114`). It registers editor-only tools.
+- Neither module declares `PlatformAllowList`, `PlatformDenyList`, `TargetAllowList`, or `TargetConfigurationDenyList`. Only the editor-side dependency plugins carry `TargetAllowList: ["Editor"]` (`:17-103`).
+
+UnrealBuildTool builds a `DeveloperTool` module when `bBuildDeveloperTools` is true (`Engine/Source/Programs/UnrealBuildTool/System/ModuleDescriptor.cs:820-821`). That flag defaults to true for Editor and Program targets and for any configuration other than Test and Shipping (`Engine/Source/Programs/UnrealBuildTool/Configuration/TargetRules.cs:1134`).
+
+The server code has no `UE_BUILD_SHIPPING`, `UE_BUILD_DEVELOPMENT`, or `UE_BUILD_TEST` guard. `#if WITH_EDITOR` blocks cover only the PIE recovery hooks (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:17-19`, `:40-42`, `:67-109`) and editor-only tool paths such as `reload-bridge-module` (`Source/SoftUEBridge/Private/Tools/ReloadBridgeModuleTool.cpp:30-31`).
+
+| Target and configuration | Module built | Server starts |
+| --- | --- | --- |
+| Editor, any configuration | Yes | Yes, except commandlets and `-unattended` runs |
+| Game or Client, Development | Yes | Yes |
+| Game or Client, DebugGame | Yes | Yes |
+| Game or Client, Test | No, unless the target sets `bBuildDeveloperTools = true` | Same as build |
+| Game or Client, Shipping | No, unless the target sets `bBuildDeveloperTools = true` | Same as build |
+| Server, Development or DebugGame | Yes | No (`IsRunningDedicatedServer()`) |
+
+Startup: `USoftUEBridgeSubsystem` derives from `UEngineSubsystem` (`Source/SoftUEBridge/Public/Subsystem/SoftUEBridgeSubsystem.h:14`), so it initializes with the engine in both editor and packaged processes.[^subsystem] `Initialize` returns early when `IsRunningCommandlet()`, `IsRunningDedicatedServer()`, or `FApp::IsUnattended()` is true (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:29-33`). Otherwise it starts log capture and calls `StartServer(ResolvePort())` (`:37-39`). `Deinitialize` stops the server and deletes `instance.json` (`:45-56`). A packaged Development build launched with `-unattended`, as CI often does, runs without a bridge.
+
+The README states the same build matrix (`README.md:1047`, `README.md:972`), and `soft_ue_cli/runtime_binary.py:12` treats only Development and DebugGame as supported packaged configurations.
+
+### Instance discovery
+
+Plugin side:
+
+- Writer: `USoftUEBridgeSubsystem::WriteInstanceRegistry`, called after a successful `Start` (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:132`).
+- Location: `FPaths::ProjectDir()/.soft-ue-bridge/instance.json`, with the directory created on demand (`:193-206`, `:216`). The header comment says `~/.soft-ue-bridge/instance.json` (`Source/SoftUEBridge/Public/Subsystem/SoftUEBridgeSubsystem.h:59`); the code uses the project directory.
+- Contents: `{"port": <int>, "host": "127.0.0.1"}` (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:208-214`). No PID, instance ID, or token. The PID and `bridge_instance_id` appear only in the `GET /bridge` response.
+- Deletion: `StopServer` deletes the file unconditionally, without checking which process wrote it (`:150-160`, `:228-236`). It runs on `Deinitialize` and `RestartServer`.
+- Multiple instances of one project overwrite each other's file. When any of them stops, the file disappears while the others still run.
+- `sessions.json` in the same directory survives shutdown (`Source/SoftUEBridge/Private/Session/BridgeSessionRegistry.cpp:532`, `:585`).
+- Packaged builds: the same code runs, so the file lands under the packaged build's `ProjectDir()`, inside the staged output next to its `Content` folder.[^packaged] Write failure only logs an error (`Source/SoftUEBridge/Private/Subsystem/SoftUEBridgeSubsystem.cpp:201-205`, `:222-225`).
+
+CLI side, resolution order in `get_server_url` (`soft_ue_cli/discovery.py:54-75`):
+
+1. `--server URL` flag. `main` copies it into `SOFT_UE_BRIDGE_URL` before any call (`soft_ue_cli/__main__.py:5535-5543`, `:9760-9761`).
+2. `SOFT_UE_BRIDGE_URL`, any scheme and host, trailing slash removed (`soft_ue_cli/discovery.py:63-64`).
+3. `SOFT_UE_BRIDGE_PORT`, mapped to `http://127.0.0.1:<port>`. A non-integer value is skipped (`:66-70`).
+4. The first `.soft-ue-bridge/instance.json` found walking up from the current directory. `host` and `port` are taken as written, defaulting to `127.0.0.1` and `8080`. A parse error yields no URL and does not continue the walk (`:10-28`, `:72-73`).
+5. `http://127.0.0.1:8080` (`:75`).
+
+Stale-port fallback: when `SOFT_UE_BRIDGE_PORT` is set, `SOFT_UE_BRIDGE_URL` is unset, and the request fails with a connection error, timeout, or HTTP error status, the client retries against the `instance.json` URL and prints a warning to stderr (`soft_ue_cli/discovery.py:31-51`; `soft_ue_cli/client.py:353-381`, `:448-476`).
+
+`SOFT_UE_BRIDGE_PORT` is read by both the Unreal process and the CLI. The CLI has no `--port` or `--token` flag and reads no `SOFT_UE_BRIDGE_TOKEN`. The README documents a remote URL example, `http://192.168.1.10:8080` (`README.md:935`).
+
+### Current versus target
+
+| Area | Current | Target (#33 to #39) |
+| --- | --- | --- |
+| Bind address | Engine `[HTTPServer.Listeners]` setting, loopback when unset. Plugin's `127.0.0.1` drives only the port probe and logs. Non-loopback config goes unnoticed. | Loopback by default. Non-loopback only through explicit opt-in, with a warning. |
+| Bind failure | Reported as running; `instance.json` still written. | Not specified. |
+| Port | `SOFT_UE_BRIDGE_PORT` or 8080, then +1 up to 10 tries. | No change specified. |
+| Token | None. | Per-instance token, generated at start, stored in `instance.json`. |
+| Request check | None. CORS `*` on every response. | Token checked on every request. |
+| Rejection | No `unauthorized` code; only standard JSON-RPC codes. | Structured `unauthorized` error. |
+| CLI credential | None sent. | Read from `instance.json` automatically; `SOFT_UE_BRIDGE_TOKEN` and `--token` override. |
+| `instance.json` | `port` and `host` only; last writer wins; any stop deletes it. | Also carries the token. |
+| Packaged builds | File written to the packaged `ProjectDir()`; CLI finds it only when run from inside that tree. | Token written to a discoverable location. |
+| Health `GET` | Unauthenticated; returns PID, instance ID, tool names, module paths. | Not specified. |
+
+[^engine]: Engine citations come from the local UE 5.7.4 source at `C:\Program Files\Epic Games\UE_5.7\Engine`. They are verified there and do not live in this repository. Other engine versions may differ.
+
+[^tick]: Speculation. `FHttpServerModule::Tick` exists at the cited lines, but the ticker registration that places it on the game thread was not traced.
+
+[^subsystem]: Speculation. Engine subsystems initialize during `UEngine::Init` in both editor and game processes. This is standard engine behavior that was not traced in source for this document.
+
+[^packaged]: Speculation. In a packaged build `FPaths::ProjectDir()` usually resolves to the staged `<ProjectName>/` folder relative to the binaries. Whether that folder is writable depends on where the build is installed. Neither was tested.
