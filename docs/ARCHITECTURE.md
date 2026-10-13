@@ -74,7 +74,7 @@ Editor tool categories live under `SoftUEBridgeEditor/Private/Tools/<Category>/`
 
 `pyproject.toml` builds with Hatchling. `[tool.hatch.build] include = ["soft_ue_cli/**"]` covers the package, including `plugin_data/`. A separate `[tool.hatch.build.targets.wheel.force-include]` table lists each skill `.md` file by hand; its comment says to add a line for every new skill. No test checks that this list matches the directory contents. (Speculative: Hatchling normally includes non-Python files inside a listed package, so the force-include table may be redundant. This needs a wheel build to confirm before anyone removes it.)
 
-Dependencies are `httpx` and `Pillow`; the `mcp` extra adds `mcp>=1.2` for `mcp-serve`.
+Dependencies are `httpx` and `Pillow`; the `mcp` extra adds `mcp>=1.2,<2` for `mcp-serve`. The upper bound comes from #88: mcp 2.x removed `mcp.server.fastmcp`, which `mcp_server.py` imports.
 
 ### Tests
 
@@ -119,7 +119,7 @@ This section traces `soft-ue-cli get-console-var r.ScreenPercentage`, a bridge-b
                               "client": "cli", "pid": 1234, "confidence": "declared|derived"}}}
      ```
    - **Failure handling.** On connect error, timeout, or HTTP error status, the client first tries the stale-port fallback (only when `SOFT_UE_BRIDGE_PORT` is set and `SOFT_UE_BRIDGE_URL` is not, and `instance.json` points elsewhere). On connect error or timeout it then checks for the editor startup-recovery prompt and retries once if it handled one. Otherwise it raises `BridgeError(EXPECTED)` with a message that includes the session postmortem from `sessions.json` when available. HTTP 5xx maps to `UNEXPECTED`, 4xx to `EXPECTED`, and the message is only `HTTP <code>` (the JSON-RPC error body is discarded).
-   - **Response.** A non-JSON body raises `UNEXPECTED`. A JSON-RPC `error` object raises `UNEXPECTED` with `error.message`. A `result` with `isError: true` raises `UNEXPECTED` with the first content item's text (one exception: `find-references` `incomplete_fib_index` errors are `EXPECTED`). Otherwise the first `content[0].text` is parsed as JSON and returned; non-JSON text comes back as `{"text": ...}`. `result.session_notices` rides along in `BridgeCallMeta`.
+   - **Response.** A non-JSON body raises `UNEXPECTED`. A JSON-RPC `error` object raises `UNEXPECTED` with `error.message`. A `result` with `isError: true` raises `UNEXPECTED` with the first content item's text. Two cases are `EXPECTED` instead: `find-references` `incomplete_fib_index` errors, and (since #86) a JSON payload with `error_code: "plugin_unavailable"`, whose fields are kept on `BridgeError.details`. Otherwise the first `content[0].text` is parsed as JSON and returned; non-JSON text comes back as `{"text": ...}`. `result.session_notices` rides along in `BridgeCallMeta`.
 6. **Output.** `_print_json` writes the dict to stdout with `indent=2, ensure_ascii=False`, falling back to ASCII escapes on `UnicodeEncodeError`. Exit code 0.
 
 ### Bridge side
@@ -181,9 +181,9 @@ Commands that do not need the editor never touch `client.py`. For example, `asse
 ### Error contract
 
 - CLI exit codes: 0 on success, 1 on any error. Errors go to stderr as `error: <message>`, followed by a `report-bug` suggestion when the error is `UNEXPECTED`.
-- `errors.py` defines only the `EXPECTED`/`UNEXPECTED` split. It has no error-code enumeration. Structured `error_code` values exist ad hoc in `__main__.py` for readiness checks (`bridge_not_ready`, `bridge_unreachable`, `http_404_not_bridge`, and others near line 655).
-- `plugin_unavailable`: `UBridgeToolBase::PluginUnavailable` (`SoftUEBridge/Private/Tools/BridgeToolBase.cpp:89`) builds `{"success": false, "error_code": "plugin_unavailable", "plugin", "command", "message", "recovery"}`. It returns through `FBridgeToolResult::Json`, so `isError` is `false`, and the CLI prints it to stdout with exit code 0. The Python side has no handling for this code. At commit `4f1fec7` no tool calls `PluginUnavailable`; the only occurrences are the declaration, the definition, a source-pattern test (`tests/test_plugin_descriptor.py:331`), README text, and the changelog.
-- MCP: `mcp_server.py` returns errors as a JSON string `{"error": "Tool '<name>' failed: ...", "bug_report_hint": {...}}` in the tool result. It does not raise MCP protocol errors.
+- `errors.py` defines the `EXPECTED`/`UNEXPECTED` split and one bridge error code, `PLUGIN_UNAVAILABLE` (#86). It has no general error-code enumeration. Structured `error_code` values exist ad hoc in `__main__.py` for readiness checks (`bridge_not_ready`, `bridge_unreachable`, `http_404_not_bridge`, and others near line 655).
+- `plugin_unavailable`: `UBridgeToolBase::PluginUnavailable` (`SoftUEBridge/Private/Tools/BridgeToolBase.cpp:89`) builds `{"success": false, "error_code": "plugin_unavailable", "plugin", "command", "message", "recovery"}`. Since #86 it keeps that JSON as the result text and sets `isError: true`. `call_tool_ex` recognizes the payload through `parse_structured_error` (`soft_ue_cli/errors.py:41`) and raises `BridgeError(EXPECTED)` with the message and recovery, so the CLI prints both to stderr and exits 1 without a `report-bug` hint. Callers: `run-python-script` when PythonScriptPlugin is not loaded, and the nine Mutable edit tools in `EditCustomizableObjectGraphTool.cpp` when the asset fails to load and `MutableIntrospectionUtils::IsMutablePluginEnabled()` is false.
+- MCP: `mcp_server.py` returns errors as a JSON string `{"error": "Tool '<name>' failed: ..."}` in the tool result, adds `bug_report_hint` for `UNEXPECTED` errors, and copies any `BridgeError.details` fields (such as `error_code`, `plugin`, `command`, `message`, and `recovery`) beside `error`. It does not raise MCP protocol errors.
 
 ## Commands catalog
 
@@ -263,7 +263,7 @@ Inventory taken 2026-10-13 against fork `main` at `4f1fec7` (`4f1fec744e71bb2341
 | Fork commits taken from upstream after the tag | None |
 | Fork commits patch-equivalent to upstream (`git cherry`) | None |
 | Net diff `v1.45.0..main` | 34 files, +5626 / -117 lines |
-| Open pull requests | None |
+| Open pull requests | Only the Phase 0 documentation PRs #81 to #83, opened alongside this inventory |
 | Closed unmerged pull requests | None |
 
 Package version in `pyproject.toml` is still `1.45.0`, and the `Unreleased` section of `CHANGELOG.md` is empty. No fork commit since the tag touches `CHANGELOG.md`.
@@ -335,7 +335,7 @@ Issue #29 should add entries for the following groups, none of which `CHANGELOG.
 
 ### Pull requests
 
-The fork has 16 pull requests, all merged. None are open and none were closed without merging.
+At inventory time the fork had 16 merged pull requests, listed below, plus the open Phase 0 documentation PRs #81 to #83. None had been closed without merging.
 
 | PR | Merged | Title | Status against `v1.45.0` |
 | --- | --- | --- | --- |
@@ -416,7 +416,7 @@ Reachable tools include `call-function`, `set-property`, `set-config-value`, `se
 | Route | One route, `/bridge`. No `/health` path exists. | `Source/SoftUEBridge/Private/Server/BridgeServer.cpp:115-119` |
 | `OPTIONS` | CORS preflight, `204 No Content`. | `:156-165` |
 | `GET` | Health JSON: `name`, `version`, `running`, `pid`, `started_at`, `bridge_instance_id`, `tools`, `tool_names`, `module_paths` (plugin binary paths). | `:168-202` |
-| `POST` | JSON-RPC 2.0. Methods: `initialize`, `initialized`, `shutdown`, `tools/list`, `tools/call`. | `:290-310` |
+| `POST` | JSON-RPC 2.0. Methods: `initialize`, `notifications/initialized`, `shutdown`, `tools/list`, `tools/call`. | `:290-310` |
 | Other verbs | `405` with JSON-RPC `InvalidRequest`. | `:204-208` |
 | Empty or invalid body | `400` with `ParseError`. | `:220-231` |
 | Notifications | `202 Accepted`, empty body. | `:262-268` |
