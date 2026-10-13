@@ -28,7 +28,7 @@ Homepage = "https://github.com/softdaddy-o/soft-ue-cli"
 Repository = "https://github.com/softdaddy-o/soft-ue-cli"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.2,<2"]
 
 [tool.hatch.build]
 include = ["soft_ue_cli/**"]
