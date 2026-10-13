@@ -100,7 +100,12 @@ FBridgeToolResult UBridgeToolBase::PluginUnavailable(
 		TEXT("message"),
 		FString::Printf(TEXT("%s plugin is not enabled."), *PluginName));
 	Result->SetStringField(TEXT("recovery"), Recovery);
-	return FBridgeToolResult::Json(Result);
+
+	// Keep the structured payload as JSON text, but flag the result as an error so
+	// the CLI exits non-zero and MCP clients see a failure.
+	FBridgeToolResult ToolResult = FBridgeToolResult::Json(Result);
+	ToolResult.bIsError = true;
+	return ToolResult;
 }
 
 bool UBridgeToolBase::MatchesWildcard(const FString& Name, const FString& Pattern)

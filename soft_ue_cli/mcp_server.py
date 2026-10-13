@@ -195,6 +195,8 @@ def _make_tool_fn(tool_name: str, params: dict | None = None):
                     except Exception:
                         pass
             error_response = {"error": f"Tool '{tool_name}' failed: {exc.message}"}
+            for key, value in exc.details.items():
+                error_response.setdefault(key, value)
             if exc.kind == ErrorKind.UNEXPECTED:
                 error_response["bug_report_hint"] = bug_nudge_payload(
                     exc.tool_name, exc.message,

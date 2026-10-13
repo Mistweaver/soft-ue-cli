@@ -258,7 +258,7 @@ soft-ue-cli commands --plugin Mutable --json
 
 The README uses a conservative `120+` count. For exact numbers in the installed version, use `soft-ue-cli commands --json` for the full catalog and `soft-ue-cli mcp-serve` for the MCP-exposed leaf tools.
 
-The JSON output marks each command's status and includes whether it needs the bridge, editor, PIE, or optional Unreal plugins. Plugin-dependent bridge tools use a structured unavailable response when a plugin is missing:
+The JSON output marks each command's status and includes whether it needs the bridge, editor, PIE, or optional Unreal plugins. Plugin-dependent bridge tools return a structured error when a plugin is missing. The CLI prints the message and recovery to stderr and exits 1; `mcp-serve` returns these fields beside `error`:
 
 ```json
 {
@@ -266,6 +266,7 @@ The JSON output marks each command's status and includes whether it needs the br
   "error_code": "plugin_unavailable",
   "plugin": "StateTree",
   "command": "statetree inspect",
+  "message": "StateTree plugin is not enabled.",
   "recovery": "Enable the StateTree plugin, rebuild if prompted, and restart the editor."
 }
 ```

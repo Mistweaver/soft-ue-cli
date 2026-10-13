@@ -1347,3 +1347,10 @@ TSharedPtr<FJsonObject> MutableIntrospectionUtils::BuildMutableDiagnosticsResult
 
 	return Result;
 }
+
+bool MutableIntrospectionUtils::IsMutablePluginEnabled()
+{
+	bool bEnabled = false;
+	BuildPluginInfo(bEnabled);
+	return bEnabled;
+}
