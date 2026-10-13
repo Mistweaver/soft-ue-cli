@@ -247,3 +247,113 @@ Static analysis at commit `4f1fec7` finds top-level MCP tools that the bridge ad
 8. **Aliases.** When renaming or folding a flat command into a family, add the mapping to `COMMAND_ALIAS_PREFIXES` or `REMOVED_COMMAND_MIGRATIONS` in `command_aliases.py`.
 9. **Tests.** Cover argument parsing in `tests/test_main.py`, the schema in `tests/test_mcp_schema.py`, catalog metadata in `tests/test_command_catalog.py`, and registration with a source-pattern test in `tests/test_plugin_descriptor.py`.
 10. **Docs.** Update `README.md` and `CHANGELOG.md`. For a new skill, add the `.md` file to `soft_ue_cli/skills/` and a line to the `force-include` table in `pyproject.toml`.
+
+## Fork changes since upstream v1.45.0
+
+Inventory taken 2026-10-13 against fork `main` at `4f1fec7` (`4f1fec744e71bb234113b5093cf041518656fb4e`). The baseline is the upstream tag `softdaddy-o/soft-ue-cli` `v1.45.0` (`6239e83`, "sync: cli-v1.45.0", 2026-08-03). The tag is an ancestor of fork `main`; the fork merged it on 2026-08-07 in `173a4fc`.
+
+### Summary
+
+| Measure | Value |
+| --- | --- |
+| Commits in `v1.45.0..main` | 42 |
+| Non-merge commits | 25 (all authored by Mistweaver) |
+| Merge commits | 17 |
+| Upstream `main` commits after `v1.45.0` | 0 (upstream `main` still points at `6239e83`, 2026-08-03) |
+| Fork commits taken from upstream after the tag | None |
+| Fork commits patch-equivalent to upstream (`git cherry`) | None |
+| Net diff `v1.45.0..main` | 34 files, +5626 / -117 lines |
+| Open pull requests | None |
+| Closed unmerged pull requests | None |
+
+Package version in `pyproject.toml` is still `1.45.0`, and the `Unreleased` section of `CHANGELOG.md` is empty. No fork commit since the tag touches `CHANGELOG.md`.
+
+### Feature groups
+
+| Group | Description | PRs | Commits | CLI commands | In `CHANGELOG.md` |
+| --- | --- | --- | --- | --- | --- |
+| Control Rig tools | Read-only inspection of Control Rig hierarchies, control values, and RigVM graphs. | #13 | `2899c7f` | New: `rig inspect`, `rig control get`, `rig graph inspect` | No |
+| Niagara System inspection | Read-only dump of a Niagara System: emitters, ordered module stack per script stage, module input sources, renderers and their materials, curves, scalability, and user parameters. | #15, #14 | `ffe8044` (#15); `2879bbf`, `981fae4`, `f50d63a` (#14) | New: `niagara system inspect` | No |
+| Material root connections and resolved settings | `query-material` reports what each material output (BaseColor, EmissiveColor, Opacity, and so on) connects to, and resolves shading model and blend mode to names. | #15, #14 | `f070008` (#15); `62fe2e9` (#14) | Changed output: `query-material` (no new flags) | No |
+| `set-property` inherited and native component overrides | `set-property` can override properties on components a Blueprint inherits from an ancestor SCS node or from native C++. | #15, #14 | `f505b6c` (#15); `62fe2e9` (#14) | Changed behavior: `set-property` (no new flags) | No |
+| Cloth build fixes and `.uplugin` dependency | Clears UE 5.7 cloth deprecation warnings, restores UE 5.7 compatibility for cloth Dataflow and unbind APIs, fixes a `LoadSkeletalMesh` unity-build collision, and declares the optional `ChaosClothAssetEditor` plugin dependency. | #12, #16; two commits without a PR | `fad6b56` (#12); `c4870ac` (#16); `f12f48c`, `8338d96` (direct to `main`) | None new; affects the `cloth` family build | No |
+| Unreal Insights trace analysis | `insights-analyze` reads traces through the TraceServices providers and gains frame, timer, call tree, counter, CSV profiler, thread, and bottleneck analyses. `insights-capture` now starts and stops tracing through `FTraceAuxiliary`, so paths with spaces work. | None (direct to `main`) | `9b3a476`, `0dc06d7`, `7176eab`, `2704edc` | Changed: `insights-analyze`, `insights-capture` | No |
+| UE 5.8 and 5.7 compatibility (upstreamed in equivalent form) | Builds against UE 5.8 `FSharedString` JSON keys, migrates UE 5.8 and UE 5.7 deprecated APIs, fixes an anim montage unity-build collision, guards a client `KeyError`, and fixes a testimonial backslash. | #6, #7, #8, #9, #10, #11; one commit without a PR | `7e65569` (#6); `39bb6ba` (direct); `f1e523e`, `036e183` (#7); `ff136d7` (#8); `3208b88` (#9); `9289afa` (#10); `beb22ab`, `2ef63a3` (#11) | None | Yes, as upstream entries in 1.39.0 through 1.42.0 |
+
+### Group notes
+
+**Control Rig tools.** Adds the `rig` command family to `command_catalog.py`, `__main__.py`, and the MCP command families in `mcp_schema.py`. Flags: `rig inspect` takes `--name-filter`, `--element-type`, `--transforms`, `--include-settings`, and `--include-offsets`; `rig control get` takes `--control` and `--value-type`; `rig graph inspect` takes `--graph`, `--node-filter`, `--include-pins`, and `--include-links`. Bridge tools `rig-inspect`, `rig-control-get`, and `rig-graph-inspect` register in `SoftUEBridgeEditorModule.cpp`. The `.uplugin` gains editor-only `ControlRig` and `RigVM` dependencies, and `SoftUEBridgeEditor.Build.cs` gains the matching modules.
+
+**Niagara System inspection.** The work landed through two PRs with overlapping history. PR #15 (merged 2026-09-16) carries `ffe8044`, a rewritten single commit with the full bridge tool `niagara-system-inspect`, its serializer, the `Niagara` `.uplugin` dependency, and module registration. PR #14 (merged 2026-10-05) carries the original commit series. Its merge (`4f1fec7`) changed only Python files relative to `1d42022`: the `niagara` command family in `__main__.py`, `command_catalog.py`, and `mcp_schema.py`, plus tests. Flags on `niagara system inspect`: `--emitter`, `--no-modules`, `--no-renderers`, `--no-parameters`, `--skip-disabled-modules`, `--include-module-inputs`, `--max-dynamic-input-depth`, and `--include-curves`.
+
+**Material root connections and resolved settings.** Bridge-side change in `QueryMaterialTool.cpp` (`ExtractRootConnections`, `ExtractMaterialSettings`). The shading model field is a bitmask, and the tool now decodes it to a name. `62fe2e9` in PR #14 is an earlier combined version of this change and the `set-property` fix; `f070008` and `f505b6c` in PR #15 split them.
+
+**`set-property` inherited and native component overrides.** Bridge-side change in `SetPropertyTool.cpp`. Components declared by an ancestor Blueprint's SCS node are overridden through the `InheritableComponentHandler` template for that node. Native components are handled separately.
+
+**Cloth build fixes and `.uplugin` dependency.** `ChaosClothAssetEditor` is declared as optional and editor-only. `f12f48c` and `8338d96` were committed straight to `main` on 2026-08-07 with no PR; they add tests in `tests/test_plugin_source_compat.py` and `tests/test_plugin_descriptor.py`.
+
+**Unreal Insights trace analysis.** All four commits went straight to `main` on 2026-08-07 with no PR. New `--analysis-type` values: `frame_stats`, `top_functions`, `call_tree`, `counters`, `csv_stats`, `threads`, and `bottlenecks` (upstream offered only `basic_info`). New flags: `--timer-name`, `--direction` (`callees` or `callers`), `--max-depth`, `--column-filter`, `--top-n`, `--start-time`, `--end-time`, and `--hitch-threshold-ms`. `7176eab` fixes four runtime defects found against a real trace, including a TraceServices read-scope crash and an `insights-capture` path bug that silently wrote no trace. `2704edc` ranks bottleneck timers by self time over the full timer set.
+
+**UE 5.8 and 5.7 compatibility.** Upstream released equivalent changes under its own SHAs, so the net diff against `v1.45.0` is small. The only remaining fork-specific difference is the version guard form: the fork uses `ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)` where upstream uses `ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8`. The difference appears in `SoftUEBridgeEditorModule.cpp`, `EditCustomizableObjectGraphTool.cpp`, `MutableIntrospectionUtils.cpp`, and `SetNodePositionTool.cpp`. These commits need no changelog backfill.
+
+### Changelog backfill input
+
+Issue #29 should add entries for the following groups, none of which `CHANGELOG.md` records today:
+
+| Group | Suggested section |
+| --- | --- |
+| Control Rig tools | Added |
+| Niagara System inspection | Added |
+| Unreal Insights trace analysis (new analysis types and flags) | Added |
+| Material root connections and resolved settings | Added |
+| `set-property` inherited and native component overrides | Fixed |
+| Insights runtime defects and bottleneck ranking (`7176eab`, `2704edc`) | Fixed |
+| Cloth build fixes and `ChaosClothAssetEditor` dependency | Fixed |
+| UE 6 forward version guards | Fixed (optional; one line) |
+
+### Merge commits
+
+| SHA | Date | Merges |
+| --- | --- | --- |
+| `4f1fec7` | 2026-10-05 | PR #14 `feat/niagara-system-inspect` |
+| `1d42022` | 2026-09-16 | PR #16 `fix/uplugin-chaosclothasseteditor-dep` |
+| `92fe38c` | 2026-09-16 | PR #15 `feat/niagara-inspect-tools` |
+| `4164632` | 2026-08-28 | PR #13 `feat/rig-tools` |
+| `ef55ad0` | 2026-08-20 | PR #12 `pr/ue57-cloth-deprecation-warnings` |
+| `173a4fc` | 2026-08-07 | Upstream `origin/main` at `v1.45.0` |
+| `14b59a8` | 2026-07-05 | PR #11 `fix/client-keyerror-testimonial-backslash` |
+| `ad454ac` | 2026-07-05 | PR #10 `fix/ue58-deprecation-version-guards` |
+| `0cf3b03` | 2026-07-05 | PR #9 `fix/ue58-deprecation-warnings` |
+| `8ba7627` | 2026-07-05 | PR #8 `fix/anim-montage-unity-build-collision` |
+| `48e3380` | 2026-07-05 | PR #7 `ue5.8-jsonobject-sharedstring-compat` |
+| `0cfe873` | 2026-07-04 | `fork/main` into local `main` |
+| `3025184` | 2026-07-04 | Upstream `origin/main` |
+| `40a6d81` | 2026-06-15 | PR #6 `fix/asset-material-deprecation-warnings` |
+| `778c298` | 2026-06-15 | Upstream `origin/main` |
+| `5f5713c` | 2026-06-03 | Upstream `main` at `cli-v1.36.0` |
+| `47e0f79` | 2026-05-29 | PR #5 `feat/metasound-inspect` (content already in `v1.45.0`) |
+
+### Pull requests
+
+The fork has 16 pull requests, all merged. None are open and none were closed without merging.
+
+| PR | Merged | Title | Status against `v1.45.0` |
+| --- | --- | --- | --- |
+| #16 | 2026-09-16 | fix(plugin): declare ChaosClothAssetEditor dependency in .uplugin | Fork only |
+| #15 | 2026-09-16 | feat(plugin): Niagara inspection tools, material root connections, inherited-component property writes | Fork only |
+| #14 | 2026-10-05 | feat(niagara): add read-only Niagara System inspection tool | Fork only |
+| #13 | 2026-08-28 | feat(rig): read-only Control Rig inspection tools | Fork only |
+| #12 | 2026-08-20 | fix(plugin): clear UE 5.7 cloth deprecation warnings in ClothTools | Fork only |
+| #11 | 2026-07-05 | fix(cli): content KeyError guard, testimonial backslash, and descriptor test regression | Equivalent upstream (1.41.0) |
+| #10 | 2026-07-05 | fix(plugin): version-guard the UE 5.8 deprecated-API migration for 5.7 | Equivalent upstream, except the guard form |
+| #9 | 2026-07-05 | fix(plugin): migrate UE 5.8-deprecated APIs in editor module | Equivalent upstream (1.41.0) |
+| #8 | 2026-07-05 | fix(plugin): resolve SegmentToJson unity-build collision in anim montage tools | Equivalent upstream (1.41.0) |
+| #7 | 2026-07-05 | Fix SoftUEBridge for UE 5.8 FJsonObject FSharedString keys | Equivalent upstream (1.40.0, 1.42.0) |
+| #6 | 2026-06-15 | fix: resolve C4996 deprecation warnings in asset/material query tools | Equivalent upstream (1.39.0) |
+| #5 | 2026-05-29 | feat(metasound): read-only `metasound inspect` bridge tool | Commits in `v1.45.0` |
+| #4 | 2026-04-13 | fix(tests): repair 3 broken test assertions | Commits in `v1.45.0` |
+| #3 | 2026-04-13 | feat(plugin): default SoftUEBridge module to DeveloperTool | Commits in `v1.45.0` |
+| #2 | 2026-04-13 | fix(run-python-script): resolve --script-path locally | Commits in `v1.45.0` |
+| #1 | 2026-04-10 | Fix input validation errors and minor bugs | Commits in `v1.45.0` |
+
+Seven fork commits reached `main` without a pull request: `39bb6ba`, `f12f48c`, `8338d96`, `9b3a476`, `0dc06d7`, `7176eab`, and `2704edc`.
