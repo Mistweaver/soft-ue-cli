@@ -48,7 +48,7 @@ soft-ue-cli  (CLI or MCP server)
 - **Plugin-aware metadata** -- `soft-ue-cli commands --json` reports bridge/editor/PIE requirements plus optional Unreal plugin dependencies, and bridge tools return structured `plugin_unavailable` errors when a plugin is missing.
 - **Token-aware visual feedback** -- viewport and screenshot capture can resize output by scale, width, or height and can emit color, grayscale, or monochrome images for lower LLM token cost.
 - **Online + offline workflows** -- bridge-backed UE mutation and runtime inspection when Unreal is open, plus direct local inspection, diff, and config tooling when it is not.
-- **Config-aware workflows** ??inspect hierarchy, trace overrides, diff layers, and patch `.ini`, `BuildConfiguration.xml`, and `.uproject` data from one `config` command group.
+- **Config-aware workflows** -- inspect hierarchy, trace overrides, diff layers, and patch `.ini`, `BuildConfiguration.xml`, and `.uproject` data from one `config` command group.
 - **UMG authoring loop** -- draft editable Widget Blueprint trees, wire navigation contracts, run PIE interaction checks, and compare designer/runtime layout artifacts.
 - **LLM skill prompts** -- ships with markdown workflows (e.g. Blueprint-to-C++ conversion) exposed as MCP prompts or CLI commands.
 - **Works everywhere UE runs** -- editor, cooked builds, Windows, macOS, Linux.
@@ -122,7 +122,7 @@ pip install soft-ue-cli[mcp]     # CLI + MCP server
 
 ### 2. Install the plugin into your UE project
 
-Run the setup command **inside your LLM client** (Claude Code, Cursor, etc.) ??it outputs step-by-step instructions that the AI agent will follow to copy the plugin, edit your `.uproject`, and configure itself:
+Run the setup command **inside your LLM client** (Claude Code, Cursor, etc.) -- it outputs step-by-step instructions that the AI agent will follow to copy the plugin, edit your `.uproject`, and configure itself:
 
 ```bash
 soft-ue-cli setup /path/to/YourProject
@@ -234,7 +234,7 @@ MCP Client (Claude Desktop, Cursor, Windsurf, etc.)
     v
 soft-ue-cli mcp-serve  (FastMCP server)
     |
-    |  Reuses call_tool() ??HTTP/JSON-RPC
+    |  Reuses call_tool() -- HTTP/JSON-RPC
     v
 SoftUEBridge plugin (inside UE)
 ```
@@ -1103,7 +1103,7 @@ The MCP server exposes 120+ commands as MCP tools and skills as MCP prompts. The
 | **Tools** | 120+ commands/tools | Varies |
 | **Coverage** | Blueprints, materials, StateTrees, Mutable, widgets, PIE, profiling, DataTables, CVars, Live Coding, offline file/config inspection | Varies; many focus on live editor operations |
 | **LLM skill prompts** | Yes (MCP prompts + CLI) | No |
-| **CLI mode** | Yes ??shell scripts, CI/CD, Claude Code | MCP-only |
+| **CLI mode** | Yes -- shell scripts, CI/CD, Claude Code | MCP-only |
 | **Setup** | `pip install soft-ue-cli[mcp]` + copy one plugin | Varies; often requires custom C++/Python scripting |
 
 ---
@@ -1112,10 +1112,10 @@ The MCP server exposes 120+ commands as MCP tools and skills as MCP prompts. The
 
 soft-ue-cli is free, open-source, and maintained by one person. If it saves you hours of manual editor work or helps your AI workflow, consider supporting continued development:
 
-- [Sponsor on GitHub](https://github.com/sponsors/softdaddy-o) ??recurring or one-time
-- [Buy me a coffee on Ko-fi](https://ko-fi.com/softdaddy) ??quick one-time donation
+- [Sponsor on GitHub](https://github.com/sponsors/softdaddy-o) -- recurring or one-time
+- [Buy me a coffee on Ko-fi](https://ko-fi.com/softdaddy) -- quick one-time donation
 
-Using soft-ue-cli in your project? [Share your experience](https://github.com/softdaddy-o/soft-ue-cli/issues/new?labels=testimonial&title=Testimonial) ??I'd love to hear about it.
+Using soft-ue-cli in your project? [Share your experience](https://github.com/softdaddy-o/soft-ue-cli/issues/new?labels=testimonial&title=Testimonial) -- I'd love to hear about it.
 
 ---
 

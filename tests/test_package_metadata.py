@@ -55,3 +55,24 @@ def test_readme_tool_count_claim_matches_current_mcp_surface():
     assert "tools-60%2B" not in readme
     assert "commands-120%2B" in readme
     assert "120+" in readme
+
+
+def _published_markdown_files() -> list[Path]:
+    cli_root = _cli_root()
+    return [
+        cli_root / "README.md",
+        cli_root / "CHANGELOG.md",
+        *sorted((cli_root / "docs").rglob("*.md")),
+        *sorted((cli_root / "soft_ue_cli").rglob("*.md")),
+    ]
+
+
+def test_markdown_files_have_no_encoding_artifacts():
+    offenders = [
+        f"{path.relative_to(_cli_root())}:{line_number}"
+        for path in _published_markdown_files()
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if "??" in line
+    ]
+
+    assert offenders == []
