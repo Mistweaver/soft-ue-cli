@@ -1117,7 +1117,7 @@ soft-ue-cli was created by [softdaddy-o](https://github.com/softdaddy-o), who ma
 
 ## Roadmap
 
-The fork's roadmap is tracked in [#17](https://github.com/Mistweaver/soft-ue-cli/issues/17). Work is grouped into phases, each with its own epic and sub-issues. Phases 0 through 3 cover fork hygiene, bridge security, and MCP gateway mode. Later phases add command families for XR, audio, networking, Niagara, profiling budgets, and packaging.
+The fork's roadmap is tracked in [#17](https://github.com/Mistweaver/soft-ue-cli/issues/17). Work is grouped into phases, each with its own epic and sub-issues. Phases 0 through 3 are foundation work: orientation, fork hygiene, bridge security, and MCP gateway mode. Phases 4 through 9 add command families for XR, audio, networking, Niagara, profiling budgets, and packaging.
 
 ---
 
