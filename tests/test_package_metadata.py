@@ -76,3 +76,29 @@ def test_markdown_files_have_no_encoding_artifacts():
     ]
 
     assert offenders == []
+
+
+def _readme_text() -> str:
+    return (_cli_root() / "README.md").read_text(encoding="utf-8")
+
+
+def _readme_section(heading: str) -> str:
+    after_heading = _readme_text().split(f"\n## {heading}\n", 1)[1]
+    return after_heading.split("\n## ", 1)[0]
+
+
+def _table_row_value(section: str, label: str) -> str:
+    row_prefix = f"| **{label}** |"
+    row = next(line for line in section.splitlines() if line.startswith(row_prefix))
+    return row.removeprefix(row_prefix).rstrip(" |")
+
+
+def test_compatibility_table_lists_supported_engines_and_dependency_pins():
+    pyproject = tomllib.loads((_cli_root() / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    dependency_specs = [*pyproject["dependencies"], *pyproject["optional-dependencies"]["mcp"]]
+    compatibility = _readme_section("Compatibility")
+
+    assert _table_row_value(compatibility, "Unreal Engine").strip() == "5.7, 5.8"
+    dependencies_row = _table_row_value(compatibility, "Dependencies")
+    for spec in dependency_specs:
+        assert f"`{spec}`" in dependencies_row

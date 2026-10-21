@@ -967,11 +967,11 @@ Developers who need the bridge set `SOFT_UE_BRIDGE=1` in their environment. Ever
 
 | Requirement | Supported Versions |
 |-------------|--------------------|
-| **Unreal Engine** | 5.7 |
+| **Unreal Engine** | 5.7, 5.8 |
 | **Python** | 3.10+ |
 | **Platforms** | Windows, macOS, Linux |
 | **Build types** | Editor, DebugGame, Development; Shipping only if explicitly opted in |
-| **Dependencies** | `httpx >= 0.27`, `Pillow >= 10`; optional `mcp >= 1.2` for MCP server mode |
+| **Dependencies** | `httpx>=0.27`, `Pillow>=10`; optional `mcp>=1.2,<2` for MCP server mode |
 
 ---
 
