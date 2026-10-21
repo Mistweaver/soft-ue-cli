@@ -4,6 +4,9 @@ All notable changes to soft-ue-cli will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- The README describes this repository as a maintained fork of `softdaddy-o/soft-ue-cli`. It lists UE 5.7 and 5.8 support and the `mcp>=1.2,<2` pin, points repository links at the fork, credits the upstream author, and replaces mis-encoded dashes.
+
 ### Fixed
 - The `plugin_unavailable` contract now works end to end. Bridge tools return it as an error result, so the CLI prints the recovery guidance to stderr and exits 1 without a `report-bug` hint, and `mcp-serve` returns `error_code`, `plugin`, `command`, `message`, and `recovery` beside the `error` field.
 - `run-python-script` returns `plugin_unavailable` when PythonScriptPlugin is not loaded, and the Mutable/CustomizableObject edit commands return it when an asset fails to load and no Mutable plugin is enabled.

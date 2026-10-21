@@ -986,6 +986,8 @@ pytest -v
 
 ## Feedback
 
+The feedback commands below file issues on the upstream repository, `softdaddy-o/soft-ue-cli`. Until they point at the fork ([#90](https://github.com/Mistweaver/soft-ue-cli/issues/90)), report fork bugs and feature requests directly on [Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli/issues).
+
 ### Report a bug
 
 ```bash
