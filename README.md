@@ -1117,10 +1117,7 @@ soft-ue-cli was created by [softdaddy-o](https://github.com/softdaddy-o), who ma
 
 ## Roadmap
 
-- Track UE 5.8 compatibility and first-party MCP overlap, keeping soft-ue-cli focused on CLI/CI, offline inspection, and curated bridge workflows.
-- More LLM skills (Material-to-HLSL, Animation Blueprint automation)
-- Visual diff for Blueprint changes
-- CI/CD integration examples
+The fork's roadmap is tracked in [#17](https://github.com/Mistweaver/soft-ue-cli/issues/17). Work is grouped into phases, each with its own epic and sub-issues. Phases 0 through 3 cover fork hygiene, bridge security, and MCP gateway mode. Later phases add command families for XR, audio, networking, Niagara, profiling budgets, and packaging.
 
 ---
 

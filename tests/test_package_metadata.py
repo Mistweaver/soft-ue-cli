@@ -145,3 +145,7 @@ def test_support_section_credits_upstream_author():
     assert f"]({UPSTREAM_AUTHOR_URL})" in support
     assert f"]({UPSTREAM_REPO_URL})" in support
     assert f"{UPSTREAM_REPO_URL}/issues" not in support
+
+
+def test_roadmap_points_at_fork_roadmap_epic():
+    assert f"]({FORK_REPO_URL}/issues/17)" in _readme_section("Roadmap")
