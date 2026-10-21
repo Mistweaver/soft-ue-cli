@@ -137,3 +137,11 @@ def test_upstream_links_appear_only_in_credit_sections():
     )
 
     assert [marker for marker in upstream_markers if marker in readme_outside_credits] == []
+
+
+def test_support_section_credits_upstream_author():
+    support = _readme_section("Support this project")
+
+    assert f"]({UPSTREAM_AUTHOR_URL})" in support
+    assert f"]({UPSTREAM_REPO_URL})" in support
+    assert f"{UPSTREAM_REPO_URL}/issues" not in support

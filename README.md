@@ -1108,12 +1108,10 @@ The MCP server exposes 120+ commands as MCP tools and skills as MCP prompts. The
 
 ## Support this project
 
-soft-ue-cli is free, open-source, and maintained by one person. If it saves you hours of manual editor work or helps your AI workflow, consider supporting continued development:
+soft-ue-cli was created by [softdaddy-o](https://github.com/softdaddy-o), who maintains the upstream project at [softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli). This fork builds on that work. If soft-ue-cli saves you time, you can support the original author directly:
 
 - [Sponsor on GitHub](https://github.com/sponsors/softdaddy-o) -- recurring or one-time
-- [Buy me a coffee on Ko-fi](https://ko-fi.com/softdaddy) -- quick one-time donation
-
-Using soft-ue-cli in your project? [Share your experience](https://github.com/softdaddy-o/soft-ue-cli/issues/new?labels=testimonial&title=Testimonial) -- I'd love to hear about it.
+- [Buy a coffee on Ko-fi](https://ko-fi.com/softdaddy) -- one-time donation
 
 ---
 
