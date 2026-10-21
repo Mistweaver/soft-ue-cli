@@ -1,17 +1,15 @@
 # soft-ue-cli (+mcp)
 
-[![PyPI version](https://img.shields.io/pypi/v/soft-ue-cli.svg)](https://pypi.org/project/soft-ue-cli/)
-[![Python 3.10+](https://img.shields.io/pypi/pyversions/soft-ue-cli.svg)](https://pypi.org/project/soft-ue-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![AI agents](https://img.shields.io/badge/AI_agents-ready-7c3aed)](#why-soft-ue-cli)
 [![skills](https://img.shields.io/badge/skills-13-84cc16)](#skills-llm-workflow-prompts)
 [![commands](https://img.shields.io/badge/commands-120%2B-f97316)](#complete-command-reference)
 [![MCP](https://img.shields.io/badge/MCP-server-0ea5e9)](#mcp-server-mode)
 [![AI built for coding agents](https://img.shields.io/badge/AI_built_for-coding_agents-6b7280)](#why-soft-ue-cli)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-Support_this_project-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/softdaddy-o)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/softdaddy)
 
-Built and maintained by a solo developer. [Support this project](#support-this-project) if it saves you time.
+> **This is a maintained fork.** [Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli) is a fork of [softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli), created by [softdaddy-o](https://github.com/softdaddy-o). It last synced with upstream at v1.45.0. File issues and pull requests for the fork on the Mistweaver repository.
+>
+> `pip install soft-ue-cli` installs the upstream package from PyPI. Until the fork has its own distribution ([#30](https://github.com/Mistweaver/soft-ue-cli/issues/30)), install the fork from a clone as shown in [Development](#development).
 
 
 **Control Unreal Engine 5 from your AI agent or terminal.** soft-ue-cli gives any LLM -- via **MCP server** or **CLI** -- 120+ commands and tools to spawn actors, edit Blueprints, inspect materials and MetaSounds, build UMG screens, read and patch UE config files, run Play-In-Editor sessions, capture token-efficient screenshots, profile performance, and inspect local Unreal assets.
@@ -48,7 +46,7 @@ soft-ue-cli  (CLI or MCP server)
 - **Plugin-aware metadata** -- `soft-ue-cli commands --json` reports bridge/editor/PIE requirements plus optional Unreal plugin dependencies, and bridge tools return structured `plugin_unavailable` errors when a plugin is missing.
 - **Token-aware visual feedback** -- viewport and screenshot capture can resize output by scale, width, or height and can emit color, grayscale, or monochrome images for lower LLM token cost.
 - **Online + offline workflows** -- bridge-backed UE mutation and runtime inspection when Unreal is open, plus direct local inspection, diff, and config tooling when it is not.
-- **Config-aware workflows** ??inspect hierarchy, trace overrides, diff layers, and patch `.ini`, `BuildConfiguration.xml`, and `.uproject` data from one `config` command group.
+- **Config-aware workflows** -- inspect hierarchy, trace overrides, diff layers, and patch `.ini`, `BuildConfiguration.xml`, and `.uproject` data from one `config` command group.
 - **UMG authoring loop** -- draft editable Widget Blueprint trees, wire navigation contracts, run PIE interaction checks, and compare designer/runtime layout artifacts.
 - **LLM skill prompts** -- ships with markdown workflows (e.g. Blueprint-to-C++ conversion) exposed as MCP prompts or CLI commands.
 - **Works everywhere UE runs** -- editor, cooked builds, Windows, macOS, Linux.
@@ -122,7 +120,7 @@ pip install soft-ue-cli[mcp]     # CLI + MCP server
 
 ### 2. Install the plugin into your UE project
 
-Run the setup command **inside your LLM client** (Claude Code, Cursor, etc.) ??it outputs step-by-step instructions that the AI agent will follow to copy the plugin, edit your `.uproject`, and configure itself:
+Run the setup command **inside your LLM client** (Claude Code, Cursor, etc.) -- it outputs step-by-step instructions that the AI agent will follow to copy the plugin, edit your `.uproject`, and configure itself:
 
 ```bash
 soft-ue-cli setup /path/to/YourProject
@@ -234,7 +232,7 @@ MCP Client (Claude Desktop, Cursor, Windsurf, etc.)
     v
 soft-ue-cli mcp-serve  (FastMCP server)
     |
-    |  Reuses call_tool() ??HTTP/JSON-RPC
+    |  Reuses call_tool() -- HTTP/JSON-RPC
     v
 SoftUEBridge plugin (inside UE)
 ```
@@ -967,18 +965,18 @@ Developers who need the bridge set `SOFT_UE_BRIDGE=1` in their environment. Ever
 
 | Requirement | Supported Versions |
 |-------------|--------------------|
-| **Unreal Engine** | 5.7 |
+| **Unreal Engine** | 5.7, 5.8 |
 | **Python** | 3.10+ |
 | **Platforms** | Windows, macOS, Linux |
 | **Build types** | Editor, DebugGame, Development; Shipping only if explicitly opted in |
-| **Dependencies** | `httpx >= 0.27`, `Pillow >= 10`; optional `mcp >= 1.2` for MCP server mode |
+| **Dependencies** | `httpx>=0.27`, `Pillow>=10`; optional `mcp>=1.2,<2` for MCP server mode |
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/softdaddy-o/soft-ue-cli
+git clone https://github.com/Mistweaver/soft-ue-cli
 cd soft-ue-cli
 pip install -e .
 pytest -v
@@ -987,6 +985,8 @@ pytest -v
 ---
 
 ## Feedback
+
+The feedback commands below file issues on the upstream repository, `softdaddy-o/soft-ue-cli`. Until they point at the fork ([#90](https://github.com/Mistweaver/soft-ue-cli/issues/90)), report fork bugs and feature requests directly on [Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli/issues).
 
 ### Report a bug
 
@@ -1103,39 +1103,33 @@ The MCP server exposes 120+ commands as MCP tools and skills as MCP prompts. The
 | **Tools** | 120+ commands/tools | Varies |
 | **Coverage** | Blueprints, materials, StateTrees, Mutable, widgets, PIE, profiling, DataTables, CVars, Live Coding, offline file/config inspection | Varies; many focus on live editor operations |
 | **LLM skill prompts** | Yes (MCP prompts + CLI) | No |
-| **CLI mode** | Yes ??shell scripts, CI/CD, Claude Code | MCP-only |
+| **CLI mode** | Yes -- shell scripts, CI/CD, Claude Code | MCP-only |
 | **Setup** | `pip install soft-ue-cli[mcp]` + copy one plugin | Varies; often requires custom C++/Python scripting |
 
 ---
 
 ## Support this project
 
-soft-ue-cli is free, open-source, and maintained by one person. If it saves you hours of manual editor work or helps your AI workflow, consider supporting continued development:
+soft-ue-cli was created by [softdaddy-o](https://github.com/softdaddy-o), who maintains the upstream project at [softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli). This fork builds on that work. If soft-ue-cli saves you time, you can support the original author directly:
 
-- [Sponsor on GitHub](https://github.com/sponsors/softdaddy-o) ??recurring or one-time
-- [Buy me a coffee on Ko-fi](https://ko-fi.com/softdaddy) ??quick one-time donation
-
-Using soft-ue-cli in your project? [Share your experience](https://github.com/softdaddy-o/soft-ue-cli/issues/new?labels=testimonial&title=Testimonial) ??I'd love to hear about it.
+- [Sponsor on GitHub](https://github.com/sponsors/softdaddy-o) -- recurring or one-time
+- [Buy a coffee on Ko-fi](https://ko-fi.com/softdaddy) -- one-time donation
 
 ---
 
 ## Roadmap
 
-- Track UE 5.8 compatibility and first-party MCP overlap, keeping soft-ue-cli focused on CLI/CI, offline inspection, and curated bridge workflows.
-- More LLM skills (Material-to-HLSL, Animation Blueprint automation)
-- Visual diff for Blueprint changes
-- CI/CD integration examples
+The fork's roadmap is tracked in [#17](https://github.com/Mistweaver/soft-ue-cli/issues/17). Work is grouped into phases, each with its own epic and sub-issues. Phases 0 through 3 are foundation work: orientation, fork hygiene, bridge security, and MCP gateway mode. Phases 4 through 9 add command families for XR, audio, networking, Niagara, profiling budgets, and packaging.
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](https://github.com/softdaddy-o/soft-ue-cli/blob/main/LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
 ## Links
 
-- **PyPI**: [pypi.org/project/soft-ue-cli](https://pypi.org/project/soft-ue-cli/)
-- **GitHub**: [github.com/softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli)
+- **GitHub**: [github.com/Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli)
 - **Claude Code**: [docs.anthropic.com/en/docs/claude-code](https://docs.anthropic.com/en/docs/claude-code)

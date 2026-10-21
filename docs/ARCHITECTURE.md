@@ -90,7 +90,7 @@ The real skills path is `soft_ue_cli/skills/`. There is no `cli/` directory in t
 | `tests/test_client.py` | 1 | module docstring `cli/soft_ue_cli/client.py` |
 | `tests/test_discovery.py` | 1 | module docstring `cli/soft_ue_cli/discovery.py` |
 | `tests/test_github.py` | 1 | module docstring `cli/soft_ue_cli/github.py` |
-| `tests/test_main.py` | 1 | module docstring `cli/soft_ue_cli/__main__.py` (also contains a mis-encoded `??`) |
+| `tests/test_main.py` | 1 | module docstring `cli/soft_ue_cli/__main__.py` (also contains a mis-encoded dash) |
 | `tests/test_mcp_schema.py` | 1 | module docstring `cli/soft_ue_cli/mcp_schema.py` |
 | `tests/test_mcp_server.py` | 1 | module docstring `cli/soft_ue_cli/mcp_server.py` |
 | `tests/test_skills.py` | 1 | module docstring `cli/soft_ue_cli/skills` |
