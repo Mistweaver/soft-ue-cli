@@ -1,15 +1,11 @@
 # soft-ue-cli (+mcp)
 
-[![PyPI version](https://img.shields.io/pypi/v/soft-ue-cli.svg)](https://pypi.org/project/soft-ue-cli/)
-[![Python 3.10+](https://img.shields.io/pypi/pyversions/soft-ue-cli.svg)](https://pypi.org/project/soft-ue-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![AI agents](https://img.shields.io/badge/AI_agents-ready-7c3aed)](#why-soft-ue-cli)
 [![skills](https://img.shields.io/badge/skills-13-84cc16)](#skills-llm-workflow-prompts)
 [![commands](https://img.shields.io/badge/commands-120%2B-f97316)](#complete-command-reference)
 [![MCP](https://img.shields.io/badge/MCP-server-0ea5e9)](#mcp-server-mode)
 [![AI built for coding agents](https://img.shields.io/badge/AI_built_for-coding_agents-6b7280)](#why-soft-ue-cli)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-Support_this_project-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/softdaddy-o)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/softdaddy)
 
 > **This is a maintained fork.** [Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli) is a fork of [softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli), created by [softdaddy-o](https://github.com/softdaddy-o). It last synced with upstream at v1.45.0. File issues and pull requests for the fork on the Mistweaver repository.
 >
@@ -980,7 +976,7 @@ Developers who need the bridge set `SOFT_UE_BRIDGE=1` in their environment. Ever
 ## Development
 
 ```bash
-git clone https://github.com/softdaddy-o/soft-ue-cli
+git clone https://github.com/Mistweaver/soft-ue-cli
 cd soft-ue-cli
 pip install -e .
 pytest -v
@@ -1132,12 +1128,11 @@ Using soft-ue-cli in your project? [Share your experience](https://github.com/so
 
 ## License
 
-MIT License. See [LICENSE](https://github.com/softdaddy-o/soft-ue-cli/blob/main/LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
 ## Links
 
-- **PyPI**: [pypi.org/project/soft-ue-cli](https://pypi.org/project/soft-ue-cli/)
-- **GitHub**: [github.com/softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli)
+- **GitHub**: [github.com/Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli)
 - **Claude Code**: [docs.anthropic.com/en/docs/claude-code](https://docs.anthropic.com/en/docs/claude-code)

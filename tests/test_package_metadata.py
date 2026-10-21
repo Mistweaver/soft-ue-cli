@@ -120,3 +120,20 @@ def test_readme_opens_with_fork_notice():
     assert f"]({UPSTREAM_REPO_URL})" in notice
     assert f"]({UPSTREAM_AUTHOR_URL})" in notice
     assert "v1.45.0" in notice
+
+
+def test_upstream_links_appear_only_in_credit_sections():
+    upstream_markers = [
+        UPSTREAM_AUTHOR_URL,
+        "https://github.com/sponsors/softdaddy-o",
+        "https://ko-fi.com/softdaddy",
+        "https://pypi.org/project/soft-ue-cli",
+        "https://img.shields.io/pypi/",
+    ]
+    readme_outside_credits = (
+        _readme_text()
+        .replace(_fork_notice(), "")
+        .replace(_readme_section("Support this project"), "")
+    )
+
+    assert [marker for marker in upstream_markers if marker in readme_outside_credits] == []
