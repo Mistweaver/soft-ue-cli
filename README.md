@@ -11,7 +11,9 @@
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-Support_this_project-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/softdaddy-o)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/softdaddy)
 
-Built and maintained by a solo developer. [Support this project](#support-this-project) if it saves you time.
+> **This is a maintained fork.** [Mistweaver/soft-ue-cli](https://github.com/Mistweaver/soft-ue-cli) is a fork of [softdaddy-o/soft-ue-cli](https://github.com/softdaddy-o/soft-ue-cli), created by [softdaddy-o](https://github.com/softdaddy-o). It last synced with upstream at v1.45.0. File issues and pull requests for the fork on the Mistweaver repository.
+>
+> `pip install soft-ue-cli` installs the upstream package from PyPI. Until the fork has its own distribution ([#30](https://github.com/Mistweaver/soft-ue-cli/issues/30)), install the fork from a clone as shown in [Development](#development).
 
 
 **Control Unreal Engine 5 from your AI agent or terminal.** soft-ue-cli gives any LLM -- via **MCP server** or **CLI** -- 120+ commands and tools to spawn actors, edit Blueprints, inspect materials and MetaSounds, build UMG screens, read and patch UE config files, run Play-In-Editor sessions, capture token-efficient screenshots, profile performance, and inspect local Unreal assets.

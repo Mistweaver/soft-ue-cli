@@ -6,6 +6,10 @@ import sys
 import tomllib
 from pathlib import Path
 
+FORK_REPO_URL = "https://github.com/Mistweaver/soft-ue-cli"
+UPSTREAM_REPO_URL = "https://github.com/softdaddy-o/soft-ue-cli"
+UPSTREAM_AUTHOR_URL = "https://github.com/softdaddy-o"
+
 
 def _repo_root() -> Path:
     for parent in Path(__file__).resolve().parents:
@@ -102,3 +106,17 @@ def test_compatibility_table_lists_supported_engines_and_dependency_pins():
     dependencies_row = _table_row_value(compatibility, "Dependencies")
     for spec in dependency_specs:
         assert f"`{spec}`" in dependencies_row
+
+
+def _fork_notice() -> str:
+    intro = _readme_text().split("\n## ", 1)[0]
+    return "\n".join(line for line in intro.splitlines() if line.startswith(">"))
+
+
+def test_readme_opens_with_fork_notice():
+    notice = _fork_notice()
+
+    assert f"]({FORK_REPO_URL})" in notice
+    assert f"]({UPSTREAM_REPO_URL})" in notice
+    assert f"]({UPSTREAM_AUTHOR_URL})" in notice
+    assert "v1.45.0" in notice
