@@ -30,7 +30,7 @@ def test_find_references_node_uses_completeness_helper_and_hard_error():
     helper = (REFERENCES_DIR / "BridgeFiBCompleteness.cpp").read_text(encoding="utf-8")
     property_section = source[
         source.index("FBridgeToolResult UFindReferencesTool::FindPropertyReferences") :
-        source.index("TArray<FSoftObjectPath> UFindReferencesTool::FindMatchingBlueprintsViaFiB")
+        source.index("FBridgeToolResult UFindReferencesTool::FindNodeReferences(")
     ]
     node_section = source[
         source.index("FBridgeToolResult UFindReferencesTool::FindNodeReferences(") :
@@ -50,7 +50,6 @@ def test_find_references_node_uses_completeness_helper_and_hard_error():
     assert "ESearchMode::FiBCache" in helper
     assert "ESearchMode::FullFallback" in source
     assert "SearchMode" in node_section
-    assert "bUsedFiBCache = FiBMatches.Num() > 0" in node_section
     assert "State.CandidateCount > 0 || bCacheReady" in helper
     assert "!State.bDiscoveryInProgressAtSelection" in helper
     selection_capture = node_section.index("bDiscoveryInProgressAtSelection")
@@ -75,6 +74,29 @@ def test_find_references_node_uses_completeness_helper_and_hard_error():
     ):
         assert field in helper
     assert "indexing and retry" in helper
+
+
+def test_find_references_node_never_runs_a_fib_stream_search():
+    # Bridge tools run inside a game-thread task. FStreamSearch's worker can need
+    # the game thread, so waiting on it deadlocks or trips the TaskGraph recursion
+    # assert, and calling Run() directly races the worker and corrupts the heap.
+    source = (REFERENCES_DIR / "FindReferencesTool.cpp").read_text(encoding="utf-8")
+    header = (
+        PLUGIN_ROOT / "Source" / "SoftUEBridgeEditor" / "Public" / "Tools" / "References"
+        / "FindReferencesTool.h"
+    ).read_text(encoding="utf-8")
+    node_section = source[
+        source.index("FBridgeToolResult UFindReferencesTool::FindNodeReferences(") :
+        source.index("FBridgeToolResult UFindReferencesTool::FindNodeReferencesLegacy")
+    ]
+    assert "FStreamSearch>" not in source
+    assert "StreamSearch->" not in source
+    assert "class FStreamSearch;" not in header
+    for text in (source, header):
+        assert "FindMatchingBlueprintsViaFiB" not in text
+    assert "ProcessThreadUntilIdle" not in source
+    assert "SearchMode = BridgeFiBCompleteness::ESearchMode::FullFallback" in node_section
+    assert 'SetBoolField(TEXT("used_fib_cache"), false)' in node_section
 
 
 def test_find_references_raw_bridge_error_exits_cli_without_bug_nudge(monkeypatch, capsys):
