@@ -2936,6 +2936,15 @@ def cmd_anim_montage_inspect(args: argparse.Namespace) -> None:
     _print_json(_run_tool("anim-montage-inspect", arguments))
 
 
+def cmd_anim_state_machine_inspect(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "asset_path": _fix_msys_asset_path(args.asset_path),
+    }
+    if args.state_machine_name:
+        arguments["state_machine_name"] = args.state_machine_name
+    _print_json(_run_tool("anim-state-machine-inspect", arguments))
+
+
 def cmd_anim_retarget_sequence(args: argparse.Namespace) -> None:
     arguments: dict = {
         "source_sequence": _fix_msys_asset_path(args.source_sequence),
@@ -7692,6 +7701,28 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         help="Comma-separated sections to include: notifies,sections,slots (default: all)",
     )
     p_ami.set_defaults(func=cmd_anim_montage_inspect)
+
+    p_asmi = sub.add_parser(
+        "anim-state-machine-inspect",
+        help="Inspect AnimBlueprint state machines, states, and transitions.",
+        description=(
+            "Report each state machine in an AnimBlueprint: states, conduits, aliases, the entry state, and every "
+            "transition with its source, target, blend settings, priority, and a summary of its rule graph. "
+            "Nested state machines are included and name their parent state. State and state machine names in the "
+            "output are the names that anim state add and anim transition add accept.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli anim state-machine inspect /Game/Anim/ABP_Hero\n"
+            "  soft-ue-cli anim state-machine inspect /Game/Anim/ABP_Hero Locomotion"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_asmi.add_argument("asset_path", help="AnimBlueprint asset path to inspect")
+    p_asmi.add_argument(
+        "state_machine_name",
+        nargs="?",
+        help="State machine graph name to report (default: every state machine)",
+    )
+    p_asmi.set_defaults(func=cmd_anim_state_machine_inspect)
 
     p_amsa = sub.add_parser(
         "anim-montage-set-slot-animation",

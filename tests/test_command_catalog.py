@@ -206,6 +206,18 @@ def test_catalog_marks_anim_montage_inspect_as_bridge_editor_command():
     assert "inspect" in meta["examples"][0]
 
 
+def test_catalog_marks_anim_state_machine_inspect_as_bridge_editor_command():
+    meta = get_command_metadata("anim state-machine inspect")
+
+    assert meta["status"] == "canonical"
+    assert meta["layer"] == "bridge"
+    assert meta["category"] == "animation"
+    assert meta["requires_bridge"] is True
+    assert meta["requires_editor"] is True
+    assert meta["requires_pie"] is False
+    assert "state-machine inspect" in meta["examples"][0]
+
+
 def test_catalog_marks_anim_retarget_sequence_as_ikrig_editor_command():
     meta = get_command_metadata("anim retarget sequence")
 
