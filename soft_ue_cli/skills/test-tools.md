@@ -114,6 +114,7 @@ class MCPClient:
         "anim-retarget-sequence": "anim retarget sequence",
         "anim-retarget-blueprint": "anim retarget blueprint",
         "anim-montage-inspect": "anim montage inspect",
+        "anim-state-machine-inspect": "anim state-machine inspect",
         "anim-montage-set-slot-animation": "anim montage set-slot-animation",
         "pose-search-schema-inspect": "anim pose-search inspect",
         "pose-search-schema-remap": "anim pose-search remap",
@@ -835,12 +836,51 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             "crossfade_duration": 0.15,
             "rule": True,
         }, has("transition_graph"))
+
+        def _sm_inspect_matches(r):
+            machines = r.get("state_machines") or []
+            if r.get("state_machine_count") != 1 or len(machines) != 1:
+                return False
+            m = machines[0]
+            states = {s.get("name") for s in m.get("states", [])}
+            transitions = m.get("transitions", [])
+            return (
+                m.get("name") == sm_name
+                and m.get("entry_state") == idle_name
+                and {idle_name, run_name} <= states
+                and any(
+                    t.get("source_state") == idle_name
+                    and t.get("target_state") == run_name
+                    and abs(t.get("crossfade_duration", 0) - 0.15) < 1e-4
+                    and t.get("rule", {}).get("kind") == "literal"
+                    and t.get("rule", {}).get("value") is True
+                    for t in transitions
+                )
+            )
+
+        run_test("anim-state-machine-inspect", "anim-state-machine-inspect", {
+            "asset_path": anim_bp_path,
+            "state_machine_name": sm_name,
+        }, _sm_inspect_matches)
+        # The bridge reports an unknown name as a tool error, which caller() raises.
+        _missing_args = {"asset_path": anim_bp_path, "state_machine_name": f"Missing_{LABEL_PFX}"}
+        _t0 = time.time()
+        try:
+            caller("anim-state-machine-inspect", _missing_args, None)
+            _missing_ok, _missing_err = False, "expected a not-found error"
+        except Exception as exc:
+            _missing_ok = "not found" in str(exc).lower() and sm_name in str(exc)
+            _missing_err = None if _missing_ok else str(exc)[:300]
+        _record("anim-state-machine-inspect unknown name", "anim-state-machine-inspect", _missing_args,
+                _missing_ok, int((time.time() - _t0) * 1000), _missing_err)
     else:
         _record("add-anim-state-machine", "add-anim-state-machine", {},
                 True, 0, "skipped: SOFT_UE_TEST_ANIM_BP not set")
         _record("add-anim-state", "add-anim-state", {},
                 True, 0, "skipped: SOFT_UE_TEST_ANIM_BP not set")
         _record("add-anim-transition", "add-anim-transition", {},
+                True, 0, "skipped: SOFT_UE_TEST_ANIM_BP not set")
+        _record("anim-state-machine-inspect", "anim-state-machine-inspect", {},
                 True, 0, "skipped: SOFT_UE_TEST_ANIM_BP not set")
 
     run_test("compile-blueprint", "compile-blueprint", {"asset_path": bp_path}, has("success"))
@@ -1559,6 +1599,8 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_cli("anim sync-marker remove help", "anim", "sync-marker", "remove", "--help",
             check_stdout=lambda s: "anim sync-marker remove" in s and "tolerance" in s)
     _montage_asset = os.environ.get("SOFT_UE_TEST_ANIM_MONTAGE", "").strip()
+    run_cli("anim state-machine inspect help", "anim", "state-machine", "inspect", "--help",
+            check_stdout=lambda s: "anim state-machine inspect" in s and "state_machine_name" in s)
     run_cli("anim montage inspect help", "anim", "montage", "inspect", "--help",
             check_stdout=lambda s: "anim montage inspect" in s and "include" in s)
     if _montage_asset:

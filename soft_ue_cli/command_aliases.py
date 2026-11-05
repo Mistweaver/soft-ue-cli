@@ -31,6 +31,7 @@ COMMAND_ALIAS_PREFIXES: dict[tuple[str, ...], str] = {
     ("anim", "sync-marker", "add"): "add-sync-marker",
     ("anim", "sync-marker", "remove"): "remove-sync-marker",
     ("anim", "state-machine", "add"): "add-anim-state-machine",
+    ("anim", "state-machine", "inspect"): "anim-state-machine-inspect",
     ("anim", "state", "add"): "add-anim-state",
     ("anim", "transition", "add"): "add-anim-transition",
     ("anim", "retarget", "repoint-references"): "anim-repoint-references",
