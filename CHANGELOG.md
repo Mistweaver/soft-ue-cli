@@ -8,6 +8,7 @@ All notable changes to soft-ue-cli will be documented in this file.
 - The README describes this repository as a maintained fork of `softdaddy-o/soft-ue-cli`. It lists UE 5.7 and 5.8 support and the `mcp>=1.2,<2` pin, points repository links at the fork, credits the upstream author, and replaces mis-encoded dashes.
 
 ### Fixed
+- `find-references node` no longer crashes the editor once the Find in Blueprints index is ready. The tool called `FStreamSearch::Run()` on the game thread while the search's own worker thread was running it, and the race corrupted the heap. The crash then surfaced in `FBridgeResponse::Error` while the bridge built the error reply. A bridge tool cannot safely wait on that worker thread either, so the tool no longer runs a Find in Blueprints query and always traverses every Blueprint in the path. Results are unchanged, because the old query's matches were discarded before they were read. `used_fib_cache` is now always `false`.
 - The `plugin_unavailable` contract now works end to end. Bridge tools return it as an error result, so the CLI prints the recovery guidance to stderr and exits 1 without a `report-bug` hint, and `mcp-serve` returns `error_code`, `plugin`, `command`, `message`, and `recovery` beside the `error` field.
 - `run-python-script` returns `plugin_unavailable` when PythonScriptPlugin is not loaded, and the Mutable/CustomizableObject edit commands return it when an asset fails to load and no Mutable plugin is enabled.
 
