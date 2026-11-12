@@ -1,7 +1,10 @@
 // Copyright soft-ue-expert. All Rights Reserved.
 
 #include "Utils/BridgeImageOutput.h"
+#include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -81,7 +84,7 @@ bool FBridgeImageOutputSpec::RunTest(const FString& Parameters)
 		int32 Height = 6;
 		FString ColorMode;
 		FString Error;
-		SoftUE::ImageOutput::ApplyImageTransform(Pixels, Width, Height, Options, ColorMode, Error);
+		TestTrue(TEXT("target width succeeds"), SoftUE::ImageOutput::ApplyImageTransform(Pixels, Width, Height, Options, ColorMode, Error));
 		TestEqual(TEXT("target width"), Width, 5);
 		TestEqual(TEXT("derived height"), Height, 3);
 	}
@@ -98,6 +101,18 @@ bool FBridgeImageOutputSpec::RunTest(const FString& Parameters)
 		TestTrue(TEXT("monochrome succeeds"), SoftUE::ImageOutput::ApplyImageTransform(Pixels, Width, Height, Options, ColorMode, Error));
 		TestEqual(TEXT("color mode is normalized"), ColorMode, FString(TEXT("monochrome")));
 		TestEqual(TEXT("bright pixel becomes white"), Pixels[0], FColor(255, 255, 255, 255));
+
+		Options.ColorMode = TEXT("grayscale");
+		Pixels = MakePixels(1, 1, FColor(0, 255, 0, 0));
+		Width = 1;
+		Height = 1;
+		TestTrue(TEXT("grayscale succeeds"), SoftUE::ImageOutput::ApplyImageTransform(Pixels, Width, Height, Options, ColorMode, Error));
+		TestEqual(TEXT("green becomes its luma"), Pixels[0], FColor(149, 149, 149, 255));
+
+		Options.ColorMode = TEXT("color");
+		Pixels = MakePixels(1, 1, FColor(10, 20, 30, 0));
+		TestTrue(TEXT("color succeeds"), SoftUE::ImageOutput::ApplyImageTransform(Pixels, Width, Height, Options, ColorMode, Error));
+		TestEqual(TEXT("color keeps channels"), Pixels[0], FColor(10, 20, 30, 255));
 	}
 
 	// rejects invalid options and mismatched dimensions
@@ -128,6 +143,9 @@ bool FBridgeImageOutputSpec::RunTest(const FString& Parameters)
 		TestTrue(TEXT("png has data"), Png.Num() > 8);
 		TestTrue(TEXT("png signature"), Png.Num() > 4 && Png[1] == 'P' && Png[2] == 'N' && Png[3] == 'G');
 		TestEqual(TEXT("size mismatch returns empty"), SoftUE::ImageOutput::CompressImage(Pixels, 5, 4, TEXT("png")).Num(), 0);
+
+		const TArray<uint8> Jpeg = SoftUE::ImageOutput::CompressImage(Pixels, 4, 4, TEXT("jpeg"));
+		TestTrue(TEXT("jpeg signature"), Jpeg.Num() > 2 && Jpeg[0] == 0xFF && Jpeg[1] == 0xD8);
 	}
 
 	// base64 output reports sizes without writing a file
@@ -147,6 +165,41 @@ bool FBridgeImageOutputSpec::RunTest(const FString& Parameters)
 			TestEqual(TEXT("width"), static_cast<int32>(Result->GetNumberField(TEXT("width"))), 2);
 			TestEqual(TEXT("original width"), static_cast<int32>(Result->GetNumberField(TEXT("original_width"))), 4);
 		}
+	}
+
+	// file output writes under the prefix, and cleanup removes only that prefix
+	{
+		const FString Directory = SoftUE::ImageOutput::GetCaptureDirectory();
+		IFileManager::Get().MakeDirectory(*Directory, true);
+		const FString StalePath = Directory / TEXT("bridgespec_stale.png");
+		const FString OtherPath = Directory / TEXT("bridgespecother_keep.png");
+		FFileHelper::SaveStringToFile(TEXT("stale"), *StalePath);
+		FFileHelper::SaveStringToFile(TEXT("keep"), *OtherPath);
+
+		FBridgeImageOutputOptions Options;
+		Options.bCleanupPrevious = true;
+		TArray<FColor> Pixels = MakePixels(2, 2, FColor::Red);
+		FString Error;
+		const TSharedPtr<FJsonObject> Result = SoftUE::ImageOutput::EncodeCapture(Pixels, 2, 2, Options, TEXT("bridgespec_"), Error);
+		TestTrue(TEXT("file encode succeeds"), Result.IsValid());
+
+		FString FilePath;
+		if (Result.IsValid() && Result->TryGetStringField(TEXT("file_path"), FilePath))
+		{
+			TestEqual(TEXT("file mode"), Result->GetStringField(TEXT("mode")), FString(TEXT("file")));
+			TestTrue(TEXT("file name has prefix"), FPaths::GetCleanFilename(FilePath).StartsWith(TEXT("bridgespec_")));
+			TestTrue(TEXT("file is written"), IFileManager::Get().FileExists(*FilePath));
+		}
+		else
+		{
+			AddError(TEXT("file mode returned no file_path"));
+		}
+		TestFalse(TEXT("same-prefix file is cleaned up"), IFileManager::Get().FileExists(*StalePath));
+		TestTrue(TEXT("other-prefix file is kept"), IFileManager::Get().FileExists(*OtherPath));
+
+		IFileManager::Get().Delete(*FilePath, false, true);
+		IFileManager::Get().Delete(*StalePath, false, true);
+		IFileManager::Get().Delete(*OtherPath, false, true);
 	}
 
 	return true;

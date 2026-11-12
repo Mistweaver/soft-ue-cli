@@ -4,8 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "Tools/BridgeToolBase.h"
-#include "Utils/BridgeImageOutput.h"
 #include "CaptureViewportTool.generated.h"
+
+struct FBridgeImageOutputOptions;
 
 /**
  * Capture the viewport screenshot (editor, PIE, or standalone).

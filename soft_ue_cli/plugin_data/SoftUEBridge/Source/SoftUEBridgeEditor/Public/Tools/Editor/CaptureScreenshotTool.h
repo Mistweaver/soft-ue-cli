@@ -4,8 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "Tools/BridgeToolBase.h"
-#include "Utils/BridgeImageOutput.h"
 #include "CaptureScreenshotTool.generated.h"
+
+struct FBridgeImageOutputOptions;
 
 /**
  * Tool to capture screenshots of editor windows, tabs, regions, or the game viewport.

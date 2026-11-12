@@ -763,8 +763,11 @@ FBridgeToolResult UCaptureScreenshotTool::OutputImage(
 			TEXT("Screenshot of %s saved to %s"), *CaptureMode, *FilePath));
 	}
 
-	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("capture-screenshot: Captured %s as %s (%d bytes)"),
-		*CaptureMode, *Options.Format, static_cast<int32>(Result->GetNumberField(TEXT("size_bytes"))));
+	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("capture-screenshot: Captured %s as %s -> %s (%d bytes)"),
+		*CaptureMode,
+		*Options.Format,
+		FilePath.IsEmpty() ? TEXT("base64") : *FilePath,
+		static_cast<int32>(Result->GetNumberField(TEXT("size_bytes"))));
 
 	return FBridgeToolResult::Json(Result);
 }
