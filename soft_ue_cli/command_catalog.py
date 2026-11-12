@@ -1072,12 +1072,21 @@ _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
     ),
     "anim state-machine": _entry(
         "anim state-machine",
-        "Canonical AnimBlueprint state-machine authoring family.",
+        "Canonical AnimBlueprint state-machine authoring and inspection family.",
         layer="bridge",
         category="animation",
         requires_bridge=True,
         requires_editor=True,
         examples=["soft-ue-cli anim state-machine add /Game/Animation/ABP_Hero Locomotion"],
+    ),
+    "anim state-machine inspect": _entry(
+        "anim state-machine inspect",
+        "Inspect AnimBlueprint state machines, states, conduits, aliases, and transitions with blend settings and rule summaries.",
+        layer="bridge",
+        category="animation",
+        requires_bridge=True,
+        requires_editor=True,
+        examples=["soft-ue-cli anim state-machine inspect /Game/Animation/ABP_Hero Locomotion"],
     ),
     "anim state": _entry(
         "anim state",

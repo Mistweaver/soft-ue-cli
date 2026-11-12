@@ -343,3 +343,24 @@ def test_asset_query_physics_constraint_frames_follow_space_and_mesh_is_body_spa
 
     # mesh_path only matters in component space, so body space warns instead of loading it.
     assert "is used only with space 'component' and was ignored" in tool_source
+
+
+def test_anim_state_machine_inspect_is_registered_and_version_gated():
+    module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimStateMachineInspectTool.cpp")
+
+    assert '#include "Tools/Animation/AnimStateMachineInspectTool.h"' in module_source
+    assert "RegisterToolClass<UAnimStateMachineInspectTool>()" in module_source
+
+    # bOnlyEvaluateWhenActive exists only in UE 5.8 headers.
+    gate = "#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)"
+    assert gate in tool_source
+    assert tool_source.index(gate) < tool_source.index("bOnlyEvaluateWhenActive")
+
+    # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
+    assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
+    assert "SmInspectSchemaProperty" in tool_source
+
+    # A child AnimBlueprint has no graphs, so an empty result points at its parent.
+    assert "UAnimBlueprint::GetParentAnimBlueprint(AnimBlueprint)" in tool_source
+    assert '"parent_anim_blueprint"' in tool_source

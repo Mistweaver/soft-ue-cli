@@ -395,6 +395,12 @@ def test_animation_graph_and_sync_marker_schema_uses_native_json_types():
     assert montage_inspect_params["properties"]["include"]["type"] == "string"
     assert "asset_path" in montage_inspect_params.get("required", [])
 
+    sm_inspect = next(t for t in tools if t["name"] == "anim state-machine inspect")
+    sm_inspect_params = sm_inspect["parameters"]
+    assert sm_inspect_params["properties"]["asset_path"]["type"] == "string"
+    assert sm_inspect_params["properties"]["state_machine_name"]["type"] == "string"
+    assert sm_inspect_params.get("required", []) == ["asset_path"]
+
     retarget_sequence = next(t for t in tools if t["name"] == "anim retarget sequence")
     retarget_sequence_params = retarget_sequence["parameters"]
     assert retarget_sequence_params["properties"]["overwrite"]["type"] == "boolean"

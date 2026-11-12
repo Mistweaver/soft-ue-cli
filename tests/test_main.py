@@ -4384,6 +4384,58 @@ def test_anim_montage_inspect_routes_to_bridge_tool():
     )
 
 
+def test_anim_state_machine_inspect_routes_to_bridge_tool():
+    args = build_parser().parse_args([
+        "anim",
+        "state-machine",
+        "inspect",
+        "/Game/Anim/ABP_Hero",
+        "Locomotion",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with(
+        "anim-state-machine-inspect",
+        {
+            "asset_path": "/Game/Anim/ABP_Hero",
+            "state_machine_name": "Locomotion",
+        },
+    )
+
+
+def test_anim_state_machine_inspect_omits_name_when_not_given():
+    args = build_parser().parse_args([
+        "anim",
+        "state-machine",
+        "inspect",
+        "/Game/Anim/ABP_Hero",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with(
+        "anim-state-machine-inspect",
+        {"asset_path": "/Game/Anim/ABP_Hero"},
+    )
+
+
+def test_anim_state_machine_inspect_prints_bridge_response(capsys):
+    response = {
+        "success": True,
+        "state_machine_count": 1,
+        "state_machines": [{"name": "Locomotion", "entry_state": "Idle"}],
+    }
+    args = build_parser().parse_args(["anim", "state-machine", "inspect", "/Game/Anim/ABP_Hero"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value=response):
+        args.func(args)
+
+    assert json.loads(capsys.readouterr().out) == response
+
+
 def test_anim_retarget_sequence_routes_to_bridge_tool():
     args = build_parser().parse_args([
         "anim",
