@@ -5,7 +5,7 @@ All notable changes to soft-ue-cli will be documented in this file.
 ## Unreleased
 
 ### Added
-- `anim state-machine inspect` reports each state machine in an AnimBlueprint, or one named state machine. It lists states, conduits, aliases, and the entry state, and each transition's source, target, crossfade duration, blend mode, logic type, priority, and rule. A rule is reported as automatic, a literal value, or the nodes that feed the result pin with their unconnected input values. Nested state machines name their parent state. The state and state machine names in the output are the names `anim state add` and `anim transition add` accept.
+- `anim state-machine inspect` reports each state machine in an AnimBlueprint, or one named state machine. It lists states, conduits, aliases, and the entry state, and each transition's source, target, crossfade duration, blend mode, logic type, priority, and rule. A rule is reported as automatic, a literal value, or the nodes that feed the result pin with their unconnected input values. Nested state machines name their parent state. State machine names and the names of entries with kind `state` are the names `anim state add` and `anim transition add` accept; those commands do not accept conduits or aliases. For a child AnimBlueprint, which has no graphs of its own, the result is empty and names the parent AnimBlueprint.
 
 ### Changed
 - The README describes this repository as a maintained fork of `softdaddy-o/soft-ue-cli`. It lists UE 5.7 and 5.8 support and the `mcp>=1.2,<2` pin, points repository links at the fork, credits the upstream author, and replaces mis-encoded dashes.

@@ -351,9 +351,7 @@ FBridgeToolResult UAnimStateMachineInspectTool::Execute(
 	UAnimBlueprint* AnimBlueprint = FBridgeAssetModifier::LoadAssetByPath<UAnimBlueprint>(AssetPath, Error);
 	if (!AnimBlueprint)
 	{
-		return FBridgeToolResult::Error(Error.IsEmpty()
-			? FString::Printf(TEXT("Asset is not an AnimBlueprint: %s"), *AssetPath)
-			: Error);
+		return FBridgeToolResult::Error(Error);
 	}
 
 	TArray<UEdGraph*> AllGraphs;
@@ -369,7 +367,11 @@ FBridgeToolResult UAnimStateMachineInspectTool::Execute(
 			continue;
 		}
 		AvailableNames.Add(StateMachineGraph->GetName());
-		if (StateMachineName.IsEmpty() || StateMachineGraph->GetName().Equals(StateMachineName, ESearchCase::IgnoreCase))
+		// A named lookup takes the first case-insensitive match, as the authoring tools do.
+		const bool bNamedMatch = !StateMachineName.IsEmpty()
+			&& MachinesJson.Num() == 0
+			&& StateMachineGraph->GetName().Equals(StateMachineName, ESearchCase::IgnoreCase);
+		if (StateMachineName.IsEmpty() || bNamedMatch)
 		{
 			MachinesJson.Add(MakeShared<FJsonValueObject>(SmInspectMachineToJson(StateMachineGraph)));
 		}
@@ -388,5 +390,18 @@ FBridgeToolResult UAnimStateMachineInspectTool::Execute(
 	Result->SetStringField(TEXT("asset_path"), AnimBlueprint->GetPathName());
 	Result->SetNumberField(TEXT("state_machine_count"), MachinesJson.Num());
 	Result->SetArrayField(TEXT("state_machines"), MachinesJson);
+
+	// A child AnimBlueprint has no graphs of its own, so an empty result does not mean the
+	// animation has no state machines. Point the caller at the blueprint that owns them.
+	if (MachinesJson.Num() == 0)
+	{
+		if (const UAnimBlueprint* ParentAnimBlueprint = UAnimBlueprint::GetParentAnimBlueprint(AnimBlueprint))
+		{
+			Result->SetStringField(TEXT("parent_anim_blueprint"), ParentAnimBlueprint->GetPathName());
+			Result->SetStringField(TEXT("note"), FString::Printf(
+				TEXT("Child AnimBlueprints inherit their parent's graphs. Inspect %s for its state machines."),
+				*ParentAnimBlueprint->GetPathName()));
+		}
+	}
 	return FBridgeToolResult::Json(Result);
 }

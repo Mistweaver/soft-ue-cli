@@ -7708,8 +7708,11 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         description=(
             "Report each state machine in an AnimBlueprint: states, conduits, aliases, the entry state, and every "
             "transition with its source, target, blend settings, priority, and a summary of its rule graph. "
-            "Nested state machines are included and name their parent state. State and state machine names in the "
-            "output are the names that anim state add and anim transition add accept.\n\n"
+            "Nested state machines are included and name their parent state. State machine names and the names of "
+            "entries with kind \"state\" are the names that anim state add and anim transition add accept; conduits "
+            "and aliases are reported but those commands do not accept them. Transition index follows graph node "
+            "order, not evaluation priority; see the priority field for that. A child AnimBlueprint has no graphs "
+            "of its own, so its result is empty and names the parent AnimBlueprint to inspect.\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli anim state-machine inspect /Game/Anim/ABP_Hero\n"
             "  soft-ue-cli anim state-machine inspect /Game/Anim/ABP_Hero Locomotion"

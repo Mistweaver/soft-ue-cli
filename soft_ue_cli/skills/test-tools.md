@@ -1598,9 +1598,9 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "anim sync-marker add" in s and "time" in s)
     run_cli("anim sync-marker remove help", "anim", "sync-marker", "remove", "--help",
             check_stdout=lambda s: "anim sync-marker remove" in s and "tolerance" in s)
-    _montage_asset = os.environ.get("SOFT_UE_TEST_ANIM_MONTAGE", "").strip()
     run_cli("anim state-machine inspect help", "anim", "state-machine", "inspect", "--help",
             check_stdout=lambda s: "anim state-machine inspect" in s and "state_machine_name" in s)
+    _montage_asset = os.environ.get("SOFT_UE_TEST_ANIM_MONTAGE", "").strip()
     run_cli("anim montage inspect help", "anim", "montage", "inspect", "--help",
             check_stdout=lambda s: "anim montage inspect" in s and "include" in s)
     if _montage_asset:

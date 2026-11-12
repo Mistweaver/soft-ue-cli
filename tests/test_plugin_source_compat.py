@@ -329,3 +329,7 @@ def test_anim_state_machine_inspect_is_registered_and_version_gated():
     # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
     assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
     assert "SmInspectSchemaProperty" in tool_source
+
+    # A child AnimBlueprint has no graphs, so an empty result points at its parent.
+    assert "UAnimBlueprint::GetParentAnimBlueprint(AnimBlueprint)" in tool_source
+    assert '"parent_anim_blueprint"' in tool_source
