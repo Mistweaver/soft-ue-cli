@@ -337,6 +337,7 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | `anim state-machine add` | Add an initialized AnimBlueprint state machine with optional initial state |
 | `anim state add` | Add a state and state content graph to an AnimBlueprint state machine |
 | `anim transition add` | Add a transition and transition rule graph between AnimBlueprint states |
+| `anim state-machine inspect` | Report AnimBlueprint state machines, states, conduits, aliases, the entry state, and transitions with blend settings and rule summaries |
 | `compile-material` | Compile a Material, MaterialInstance, or MaterialFunction |
 | `asset save` | Save a modified asset to disk (with optional `--checkout` for source control) |
 
@@ -811,6 +812,7 @@ soft-ue-cli anim state-machine add /Game/ABP_Hero Locomotion --default-state Idl
 soft-ue-cli anim state add /Game/ABP_Hero Locomotion Run --position 500,0
 soft-ue-cli anim transition add /Game/ABP_Hero Locomotion Idle Run --rule true
 soft-ue-cli blueprint node add /Game/ABP_Hero AnimGraphNode_SequencePlayer --graph-name Run
+soft-ue-cli anim state-machine inspect /Game/ABP_Hero Locomotion
 ```
 
 ### Repair an AnimMontage slot segment
