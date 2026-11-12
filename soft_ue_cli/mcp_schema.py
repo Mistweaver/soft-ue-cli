@@ -419,7 +419,6 @@ EXTRA_BRIDGE_TOOLS: tuple[dict[str, Any], ...] = (
 
 TOOL_OVERRIDES.update({
     "blueprint node add": TOOL_OVERRIDES["add-graph-node"],
-    "asset query-physics": TOOL_OVERRIDES["asset-query-physics"],
     "blueprint node position": TOOL_OVERRIDES["set-node-position"],
     "anim state-machine add": TOOL_OVERRIDES["add-anim-state-machine"],
     "anim state add": TOOL_OVERRIDES["add-anim-state"],
@@ -486,6 +485,7 @@ TOOL_OVERRIDES.update({
     "anim pose-search remap": TOOL_OVERRIDES["pose-search-schema-remap"],
     "anim pose-search database-repoint": TOOL_OVERRIDES["pose-search-database-repoint"],
     "asset repoint-references": TOOL_OVERRIDES["asset-repoint-references"],
+    "asset query-physics": TOOL_OVERRIDES["asset-query-physics"],
 })
 
 

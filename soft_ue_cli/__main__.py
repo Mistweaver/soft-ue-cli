@@ -9152,8 +9152,9 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
             "Report each body in a PhysicsAsset with its collision shapes: spheres, boxes, capsules, tapered "
             "capsules, and convex hulls, with radius, length, size, and transform. Constraints between bodies are "
             "reported with their child and parent bones, angular and linear limits, and constraint frames. "
-            "Shape transforms are relative to each body's bone by default. --space component adds the "
-            "reference-pose bone transform from the preview mesh or --mesh.\n\n"
+            "Shape transforms and constraint frames are relative to each body's bone by default. --space "
+            "component adds the reference-pose bone transform from the preview mesh or --mesh to both. Convex "
+            "bounds_min and bounds_max stay in the shape's own frame, before its transform.\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli asset query-physics /Game/Characters/PA_Hero\n"
             "  soft-ue-cli asset query-physics /Game/Characters/PA_Hero --bones thigh_l,hand_l --space component"
@@ -9165,12 +9166,12 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_aqp.add_argument(
         "--space",
         choices=["body", "component"],
-        help="Shape transform space: body (default, relative to the bone) or component (reference pose)",
+        help="Space for shape transforms and constraint frames: body (default, relative to the bone) or component (reference pose)",
     )
     p_aqp.add_argument(
         "--mesh",
         dest="mesh_path",
-        help="SkeletalMesh for --space component (default: the PhysicsAsset's preview mesh)",
+        help="SkeletalMesh for --space component (default: the PhysicsAsset's preview mesh). Ignored in body space.",
     )
     p_aqp.add_argument("--no-constraints", action="store_true", help="Omit constraints from the report")
     p_aqp.set_defaults(func=cmd_asset_query_physics)

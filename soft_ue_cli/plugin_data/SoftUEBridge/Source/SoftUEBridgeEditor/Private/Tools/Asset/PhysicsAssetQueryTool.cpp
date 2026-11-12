@@ -223,7 +223,46 @@ TSharedPtr<FJsonObject> PhysQueryAngularLimit(EAngularConstraintMotion Motion, f
 	return Json;
 }
 
-TSharedPtr<FJsonObject> PhysQueryConstraintToJson(const FConstraintInstance& Instance)
+/**
+ * A constraint frame is stored relative to its body's bone. With a reference skeleton it is moved into
+ * reference-pose component space; a bone missing from the skeleton keeps the frame in body space.
+ */
+TSharedPtr<FJsonObject> PhysQueryConstraintFrame(
+	const FTransform& Frame,
+	FName Bone,
+	const FReferenceSkeleton* RefSkeleton,
+	const TArray<FTransform>& ComponentPose,
+	TArray<FString>& Warnings)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	if (!RefSkeleton)
+	{
+		PhysQuerySetTransform(Json, Frame);
+		return Json;
+	}
+
+	const int32 BoneIndex = RefSkeleton->FindBoneIndex(Bone);
+	if (ComponentPose.IsValidIndex(BoneIndex))
+	{
+		PhysQuerySetTransform(Json, Frame * ComponentPose[BoneIndex]);
+	}
+	else
+	{
+		Warnings.AddUnique(FString::Printf(
+			TEXT("Constraint bone %s is not in the pose mesh; its constraint frame is reported in body space."),
+			*Bone.ToString()));
+		PhysQuerySetTransform(Json, Frame);
+		Json->SetStringField(TEXT("space"), TEXT("body"));
+	}
+	return Json;
+}
+
+/** RefSkeleton is null in body space. */
+TSharedPtr<FJsonObject> PhysQueryConstraintToJson(
+	const FConstraintInstance& Instance,
+	const FReferenceSkeleton* RefSkeleton,
+	const TArray<FTransform>& ComponentPose,
+	TArray<FString>& Warnings)
 {
 	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetStringField(TEXT("joint_name"), Instance.JointName.ToString());
@@ -245,13 +284,11 @@ TSharedPtr<FJsonObject> PhysQueryConstraintToJson(const FConstraintInstance& Ins
 	Linear->SetNumberField(TEXT("limit"), Instance.GetLinearLimit());
 	Json->SetObjectField(TEXT("linear"), Linear);
 
-	// Constraint frames relative to each body's bone.
-	TSharedPtr<FJsonObject> ChildFrame = MakeShared<FJsonObject>();
-	PhysQuerySetTransform(ChildFrame, Instance.GetRefFrame(EConstraintFrame::Frame1));
-	Json->SetObjectField(TEXT("child_frame"), ChildFrame);
-	TSharedPtr<FJsonObject> ParentFrame = MakeShared<FJsonObject>();
-	PhysQuerySetTransform(ParentFrame, Instance.GetRefFrame(EConstraintFrame::Frame2));
-	Json->SetObjectField(TEXT("parent_frame"), ParentFrame);
+	// Frame1 belongs to the child body and Frame2 to the parent body.
+	Json->SetObjectField(TEXT("child_frame"), PhysQueryConstraintFrame(
+		Instance.GetRefFrame(EConstraintFrame::Frame1), Instance.ConstraintBone1, RefSkeleton, ComponentPose, Warnings));
+	Json->SetObjectField(TEXT("parent_frame"), PhysQueryConstraintFrame(
+		Instance.GetRefFrame(EConstraintFrame::Frame2), Instance.ConstraintBone2, RefSkeleton, ComponentPose, Warnings));
 	return Json;
 }
 }
@@ -268,8 +305,8 @@ TMap<FString, FBridgeSchemaProperty> UPhysicsAssetQueryTool::GetInputSchema() co
 	FBridgeSchemaProperty Bones = PhysQuerySchemaProperty(TEXT("array"), TEXT("Optional bone names. Reports only these bodies and the constraints that touch them."));
 	Bones.ItemsType = TEXT("string");
 	Schema.Add(TEXT("bones"), Bones);
-	Schema.Add(TEXT("space"), PhysQuerySchemaProperty(TEXT("string"), TEXT("'body' (default) reports shape transforms relative to each body's bone. 'component' adds the reference-pose bone transform.")));
-	Schema.Add(TEXT("mesh_path"), PhysQuerySchemaProperty(TEXT("string"), TEXT("Optional SkeletalMesh for component space. Defaults to the PhysicsAsset's preview mesh.")));
+	Schema.Add(TEXT("space"), PhysQuerySchemaProperty(TEXT("string"), TEXT("'body' (default) reports shape transforms and constraint frames relative to each body's bone. 'component' adds the reference-pose bone transform to both. Convex bounds stay in the shape's own frame.")));
+	Schema.Add(TEXT("mesh_path"), PhysQuerySchemaProperty(TEXT("string"), TEXT("Optional SkeletalMesh for component space. Defaults to the PhysicsAsset's preview mesh. Ignored with a warning in body space.")));
 	Schema.Add(TEXT("include_constraints"), PhysQuerySchemaProperty(TEXT("boolean"), TEXT("Report constraints (default: true)")));
 	return Schema;
 }
@@ -307,10 +344,16 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 			: Error);
 	}
 
+	TArray<FString> Warnings;
 	USkeletalMesh* PreviewMesh = PhysicsAsset->GetPreviewMesh();
 	USkeletalMesh* PoseMesh = PreviewMesh;
 	const FString MeshPath = GetStringArgOrDefault(Arguments, TEXT("mesh_path"), TEXT(""));
-	if (!MeshPath.IsEmpty())
+	if (!MeshPath.IsEmpty() && !bComponentSpace)
+	{
+		// The pose mesh only moves transforms into component space, so it is not loaded in body space.
+		Warnings.Add(FString::Printf(TEXT("mesh_path %s is used only with space 'component' and was ignored."), *MeshPath));
+	}
+	else if (!MeshPath.IsEmpty())
 	{
 		PoseMesh = FBridgeAssetModifier::LoadAssetByPath<USkeletalMesh>(MeshPath, Error);
 		if (!PoseMesh)
@@ -333,7 +376,6 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 		ComponentPose = PhysQueryComponentSpacePose(PoseMesh->GetRefSkeleton());
 	}
 
-	TArray<FString> Warnings;
 	TArray<FName> FoundBones;
 	TArray<TSharedPtr<FJsonValue>> BodiesJson;
 	for (const USkeletalBodySetup* BodySetup : PhysicsAsset->SkeletalBodySetups)
@@ -390,6 +432,7 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 	TArray<TSharedPtr<FJsonValue>> ConstraintsJson;
 	if (bIncludeConstraints)
 	{
+		const FReferenceSkeleton* PoseSkeleton = bComponentSpace ? &PoseMesh->GetRefSkeleton() : nullptr;
 		for (const UPhysicsConstraintTemplate* Template : PhysicsAsset->ConstraintSetup)
 		{
 			if (!Template)
@@ -403,7 +446,7 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 			{
 				continue;
 			}
-			ConstraintsJson.Add(MakeShared<FJsonValueObject>(PhysQueryConstraintToJson(Instance)));
+			ConstraintsJson.Add(MakeShared<FJsonValueObject>(PhysQueryConstraintToJson(Instance, PoseSkeleton, ComponentPose, Warnings)));
 		}
 	}
 
