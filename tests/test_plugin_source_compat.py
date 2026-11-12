@@ -312,3 +312,21 @@ def test_insights_capture_starts_traces_without_console_string_parsing():
     # binaries dir, and the path is handed back to callers for insights-analyze.
     assert "ConvertRelativePathToFull" in source
     assert '.utrace' in source
+
+
+def test_asset_query_physics_is_registered_and_avoids_version_specific_elements():
+    module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
+
+    assert '#include "Tools/Asset/PhysicsAssetQueryTool.h"' in module_source
+    assert "RegisterToolClass<UPhysicsAssetQueryTool>()" in module_source
+
+    # Level set and skinned element lists change between engine versions, so they are counted
+    # through GetElementCount() instead of being read by name.
+    assert "GetElementCount()" in tool_source
+    for element_list in ("LevelSetElems", "SkinnedLevelSetElems", "MLLevelSetElems", "SkinnedTriangleMeshElems"):
+        assert element_list not in tool_source
+
+    # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
+    assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
+    assert "PhysQuerySchemaProperty" in tool_source

@@ -682,3 +682,18 @@ def test_rig_inspect_transforms_choice_is_exposed_with_default():
     assert transforms["default"] == "local"
     assert set(transforms["enum"]) == {"none", "local", "global", "both"}
     assert "transforms" not in tool["parameters"].get("required", [])
+
+
+def test_asset_query_physics_schema_uses_native_json_types():
+    tools = extract_tools()
+
+    # mcp-serve exposes the canonical name and the flat bridge name; both must take a native array.
+    for name in ("asset query-physics", "asset-query-physics"):
+        query_physics = next(t for t in tools if t["name"] == name)
+        params = query_physics["parameters"]
+        assert params["properties"]["asset_path"]["type"] == "string"
+        assert params["properties"]["bones"]["type"] == "array", name
+        assert params["properties"]["space"]["enum"] == ["body", "component"]
+        assert params["properties"]["mesh_path"]["type"] == "string"
+        assert params["properties"]["no_constraints"]["type"] == "boolean"
+        assert params.get("required", []) == ["asset_path"]

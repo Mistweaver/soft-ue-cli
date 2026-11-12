@@ -152,6 +152,12 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
         },
         "properties_remove": ["section_index"],
     },
+    # asset-query-physics: bones is a native JSON array of bone names in MCP.
+    "asset-query-physics": {
+        "properties": {
+            "bones": {"type": "array", "description": "Array of bone names to report (default: every body)"},
+        },
+    },
     "cloth weld": {
         "properties": {
             "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
@@ -413,6 +419,7 @@ EXTRA_BRIDGE_TOOLS: tuple[dict[str, Any], ...] = (
 
 TOOL_OVERRIDES.update({
     "blueprint node add": TOOL_OVERRIDES["add-graph-node"],
+    "asset query-physics": TOOL_OVERRIDES["asset-query-physics"],
     "blueprint node position": TOOL_OVERRIDES["set-node-position"],
     "anim state-machine add": TOOL_OVERRIDES["add-anim-state-machine"],
     "anim state add": TOOL_OVERRIDES["add-anim-state"],

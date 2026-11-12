@@ -206,6 +206,18 @@ def test_catalog_marks_anim_montage_inspect_as_bridge_editor_command():
     assert "inspect" in meta["examples"][0]
 
 
+def test_catalog_marks_asset_query_physics_as_bridge_editor_command():
+    meta = get_command_metadata("asset query-physics")
+
+    assert meta["status"] == "canonical"
+    assert meta["layer"] == "bridge"
+    assert meta["category"] == "asset"
+    assert meta["requires_bridge"] is True
+    assert meta["requires_editor"] is True
+    assert meta["requires_pie"] is False
+    assert "query-physics" in meta["examples"][0]
+
+
 def test_catalog_marks_anim_retarget_sequence_as_ikrig_editor_command():
     meta = get_command_metadata("anim retarget sequence")
 

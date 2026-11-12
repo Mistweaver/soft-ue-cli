@@ -4,6 +4,9 @@ All notable changes to soft-ue-cli will be documented in this file.
 
 ## Unreleased
 
+### Added
+- `asset query-physics` reports the bodies in a PhysicsAsset. Each body lists its bone, physics type, and collision shapes: spheres with radius, boxes with size, capsules with radius, length, and total length, tapered capsules with both radii, and convex hulls with vertex count and bounds. Each shape has a location, rotation, and scale relative to its bone, or in reference-pose component space with `--space component`, which uses the preview mesh or `--mesh`. Constraints list the child and parent bones, swing and twist limits, linear limits, and both constraint frames. `--bones` limits the report to named bodies and the constraints that touch them, and names any bone that has no body. Editor Python in UE 5.7 cannot read these bodies.
+
 ### Changed
 - The README describes this repository as a maintained fork of `softdaddy-o/soft-ue-cli`. It lists UE 5.7 and 5.8 support and the `mcp>=1.2,<2` pin, points repository links at the fork, credits the upstream author, and replaces mis-encoded dashes.
 
