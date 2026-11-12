@@ -370,6 +370,7 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | `asset release-lock` | Best-effort close editors and release UE file handles for a specific asset |
 | `asset set-property` | Set a property on a Blueprint CDO or component, including nested `InstancedStruct` members |
 | `asset repoint-references` | Repoint nested hard and soft asset references inside arbitrary assets such as DataAssets |
+| `asset query-physics` | Report PhysicsAsset bodies with collision shape sizes and transforms, and constraints with their limits |
 | `asset skeletal-socket create` | Create or update a mesh-owned SkeletalMesh socket, including socket and bone names |
 | `asset skeletal-socket remove` | Remove a mesh-owned SkeletalMesh socket by name |
 | `asset diff` | Get property-level diff of an asset vs. source control |

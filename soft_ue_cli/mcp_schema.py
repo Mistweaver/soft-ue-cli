@@ -152,6 +152,12 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
         },
         "properties_remove": ["section_index"],
     },
+    # asset-query-physics: bones is a native JSON array of bone names in MCP.
+    "asset-query-physics": {
+        "properties": {
+            "bones": {"type": "array", "description": "Array of bone names to report (default: every body)"},
+        },
+    },
     "cloth weld": {
         "properties": {
             "center": {"type": "array", "description": "[X, Y, Z] center for radius-based spatial vertex selection"},
@@ -479,6 +485,7 @@ TOOL_OVERRIDES.update({
     "anim pose-search remap": TOOL_OVERRIDES["pose-search-schema-remap"],
     "anim pose-search database-repoint": TOOL_OVERRIDES["pose-search-database-repoint"],
     "asset repoint-references": TOOL_OVERRIDES["asset-repoint-references"],
+    "asset query-physics": TOOL_OVERRIDES["asset-query-physics"],
 })
 
 

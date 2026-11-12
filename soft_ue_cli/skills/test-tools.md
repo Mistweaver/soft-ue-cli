@@ -24,6 +24,7 @@ When a new CLI tool, MCP-exposed tool, or new inspect/diff section is added, ext
 - MCP mode also requires — `pip install soft-ue-cli[mcp]`
 - UE running with SoftUEBridge enabled and reachable
 - Optional AnimBlueprint smoke coverage: set `SOFT_UE_TEST_ANIM_BP=/Game/.../ABP_Test`
+- Optional PhysicsAsset smoke coverage: set `SOFT_UE_TEST_PHYSICS_ASSET=/Game/.../PA_Test` and `SOFT_UE_TEST_PHYSICS_BONE` to a bone that has a body. Component-space coverage needs the PhysicsAsset to have a preview mesh.
 - Optional merged-cloth weight-map smoke: set `SOFT_UE_TEST_CLOTH_MESH`, `SOFT_UE_TEST_CLOTH_ASSET_NAME`, and at least three comma-separated `SOFT_UE_TEST_CLOTH_SECTION_INDICES` values.
 
 ## Usage
@@ -120,6 +121,7 @@ class MCPClient:
         "pose-search-schema-remap": "anim pose-search remap",
         "pose-search-database-repoint": "anim pose-search database-repoint",
         "asset-repoint-references": "asset repoint-references",
+        "asset-query-physics": "asset query-physics",
         "skeletal-mesh-socket-create": "asset skeletal-socket create",
         "skeletal-mesh-socket-remove": "asset skeletal-socket remove",
         "metasound-inspect": "metasound inspect",
@@ -1415,6 +1417,8 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "anim pose-search database-repoint" in s and "--anim-map" in s and "--schema" in s)
     run_cli("asset repoint-references help", "asset", "repoint-references", "--help",
             check_stdout=lambda s: "asset repoint-references" in s and "--map" in s)
+    run_cli("asset query-physics help", "asset", "query-physics", "--help",
+            check_stdout=lambda s: "asset query-physics" in s and "--bones" in s and "--space" in s)
     run_cli("asset skeletal-socket create help", "asset", "skeletal-socket", "create", "--help",
             check_stdout=lambda s: "asset skeletal-socket create" in s and "socket_name" in s)
     run_cli("asset skeletal-socket remove help", "asset", "skeletal-socket", "remove", "--help",
@@ -1779,6 +1783,39 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     else:
         _record("asset-repoint-references smoke", "asset-repoint-references", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ASSET_REPOINT_ASSETS and SOFT_UE_TEST_ASSET_REPOINT_MAP")
+
+    _physics_asset = os.environ.get("SOFT_UE_TEST_PHYSICS_ASSET", "").strip()
+    _physics_bone = os.environ.get("SOFT_UE_TEST_PHYSICS_BONE", "").strip()
+    if _physics_asset and _physics_bone:
+        _missing_bone = f"{LABEL_PFX}_no_such_bone"
+
+        def _physics_query_matches(r):
+            bodies = r.get("bodies") or []
+            return (
+                r.get("success") is True
+                and r.get("body_count") == 1
+                and len(bodies) == 1
+                and bodies[0].get("bone_name") == _physics_bone
+                and bodies[0].get("shape_count", 0) + bodies[0].get("other_shape_count", 0) > 0
+                and all(len(shape.get("location", [])) == 3 for shape in bodies[0].get("shapes", []))
+                and r.get("missing_bones") == [_missing_bone]
+                and isinstance(r.get("constraints"), list)
+            )
+
+        # bones is a native array: the MCP schema must not stringify it.
+        run_test("asset-query-physics bones", "asset-query-physics", {
+            "asset_path": _physics_asset,
+            "bones": [_physics_bone, _missing_bone],
+        }, _physics_query_matches)
+        run_test("asset-query-physics component space", "asset-query-physics", {
+            "asset_path": _physics_asset,
+            "bones": [_physics_bone],
+            "space": "component",
+        }, lambda r: r.get("success") is True and r.get("space") == "component"
+            and (r.get("bodies") or [{}])[0].get("bone_transform") is not None)
+    else:
+        _record("asset-query-physics smoke", "asset-query-physics", {},
+                True, 0, "skipped: set SOFT_UE_TEST_PHYSICS_ASSET and SOFT_UE_TEST_PHYSICS_BONE")
 
     _socket_mesh = os.environ.get("SOFT_UE_TEST_SOCKET_MESH", "").strip()
     _socket_bone = os.environ.get("SOFT_UE_TEST_SOCKET_BONE", "").strip()

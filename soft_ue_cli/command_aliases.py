@@ -50,6 +50,7 @@ COMMAND_ALIAS_PREFIXES: dict[tuple[str, ...], str] = {
     ("anim", "rewind", "snapshot"): "rewind-snapshot",
     ("anim", "rewind", "save"): "rewind-save",
     ("asset", "query"): "query-asset",
+    ("asset", "query-physics"): "asset-query-physics",
     ("asset", "delete"): "delete-asset",
     ("asset", "release-lock"): "release-asset-lock",
     ("asset", "diff"): "get-asset-diff",

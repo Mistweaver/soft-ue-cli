@@ -25,6 +25,7 @@
 #include "Tools/Asset/AssetRepointReferencesTool.h"
 #include "Tools/Asset/ReleaseAssetLockTool.h"
 #include "Tools/Asset/SkeletalMeshSocketTool.h"
+#include "Tools/Asset/PhysicsAssetQueryTool.h"
 
 // Blueprint
 #include "Tools/Blueprint/QueryBlueprintTool.h"
@@ -232,6 +233,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("skeletal-mesh-socket-remove")))
 	{
 		Registry.RegisterToolClass<USkeletalMeshSocketRemoveTool>();
+	}
+	if (!Registry.HasTool(TEXT("asset-query-physics")))
+	{
+		Registry.RegisterToolClass<UPhysicsAssetQueryTool>();
 	}
 	if (!Registry.HasTool(TEXT("blueprint-component-add")))
 	{

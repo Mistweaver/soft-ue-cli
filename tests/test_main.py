@@ -4592,6 +4592,75 @@ def test_asset_repoint_references_routes_to_bridge_tool():
     )
 
 
+def test_asset_query_physics_routes_to_bridge_tool():
+    args = build_parser().parse_args([
+        "asset",
+        "query-physics",
+        "/Game/Characters/PA_Hero",
+        "--bones",
+        "thigh_l, hand_l,,",
+        "--space",
+        "component",
+        "--mesh",
+        "/Game/Characters/SKM_Hero",
+        "--no-constraints",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with(
+        "asset-query-physics",
+        {
+            "asset_path": "/Game/Characters/PA_Hero",
+            "bones": ["thigh_l", "hand_l"],
+            "space": "component",
+            "mesh_path": "/Game/Characters/SKM_Hero",
+            "include_constraints": False,
+        },
+    )
+
+
+def test_asset_query_physics_sends_only_asset_path_by_default():
+    args = build_parser().parse_args(["asset", "query-physics", "/Game/Characters/PA_Hero"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with("asset-query-physics", {"asset_path": "/Game/Characters/PA_Hero"})
+
+
+def test_asset_query_physics_accepts_native_bone_list():
+    # MCP passes bones as a JSON array, which arrives as a list instead of a comma string.
+    args = build_parser().parse_args(["asset", "query-physics", "/Game/Characters/PA_Hero"])
+    args.bones = ["thigh_l", " hand_l ", ""]
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    assert mock_run.call_args.args[1]["bones"] == ["thigh_l", "hand_l"]
+
+
+def test_asset_query_physics_rejects_unknown_space():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["asset", "query-physics", "/Game/Characters/PA_Hero", "--space", "world"])
+
+
+def test_asset_query_physics_prints_bridge_response(capsys):
+    response = {
+        "success": True,
+        "body_count": 1,
+        "bodies": [{"bone_name": "thigh_l", "shapes": [{"type": "capsule", "radius": 9.5, "length": 30.0}]}],
+        "missing_bones": [],
+    }
+    args = build_parser().parse_args(["asset", "query-physics", "/Game/Characters/PA_Hero"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value=response):
+        args.func(args)
+
+    assert json.loads(capsys.readouterr().out) == response
+
+
 def test_asset_skeletal_socket_create_routes_to_bridge_tool():
     args = build_parser().parse_args([
         "asset",

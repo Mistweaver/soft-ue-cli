@@ -1310,6 +1310,15 @@ _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
         requires_editor=True,
         examples=["soft-ue-cli asset skeletal-socket create /Game/Characters/SKM_Hero weapon_r hand_r --save"],
     ),
+    "asset query-physics": _entry(
+        "asset query-physics",
+        "Report PhysicsAsset bodies with collision shape types, sizes, and transforms, and constraints with their limits.",
+        layer="bridge",
+        category="asset",
+        requires_bridge=True,
+        requires_editor=True,
+        examples=["soft-ue-cli asset query-physics /Game/Characters/PA_Hero --bones thigh_l,hand_l --space component"],
+    ),
     "asset skeletal-socket create": _entry(
         "asset skeletal-socket create",
         "Create or update a mesh-owned SkeletalMesh socket, including socket and bone names.",

@@ -3064,6 +3064,25 @@ def cmd_asset_repoint_references(args: argparse.Namespace) -> None:
     _print_json(_run_tool("asset-repoint-references", arguments))
 
 
+def cmd_asset_query_physics(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "asset_path": _fix_msys_asset_path(args.asset_path),
+    }
+    if args.bones:
+        if isinstance(args.bones, list):
+            bones = [str(bone).strip() for bone in args.bones]
+        else:
+            bones = [part.strip() for part in str(args.bones).split(",")]
+        arguments["bones"] = [bone for bone in bones if bone]
+    if args.space:
+        arguments["space"] = args.space
+    if args.mesh_path:
+        arguments["mesh_path"] = _fix_msys_asset_path(args.mesh_path)
+    if args.no_constraints:
+        arguments["include_constraints"] = False
+    _print_json(_run_tool("asset-query-physics", arguments))
+
+
 def cmd_skeletal_mesh_socket_create(args: argparse.Namespace) -> None:
     arguments: dict = {
         "asset_path": _fix_msys_asset_path(args.asset_path),
@@ -9159,6 +9178,37 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_arp.add_argument("--save", action="store_true", help="Save each changed asset after mutation")
     p_arp.add_argument("--checkout", action="store_true", help="Checkout each asset before mutation when source control is active")
     p_arp.set_defaults(func=cmd_asset_repoint_references)
+
+    p_aqp = sub.add_parser(
+        "asset-query-physics",
+        help="Report PhysicsAsset bodies, collision shapes, and constraints.",
+        description=(
+            "Report each body in a PhysicsAsset with its collision shapes: spheres, boxes, capsules, tapered "
+            "capsules, and convex hulls, with radius, length, size, and transform. Constraints between bodies are "
+            "reported with their child and parent bones, angular and linear limits, and constraint frames. "
+            "Shape transforms and constraint frames are relative to each body's bone by default. --space "
+            "component adds the reference-pose bone transform from the preview mesh or --mesh to both. Convex "
+            "bounds_min and bounds_max stay in the shape's own frame, before its transform.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli asset query-physics /Game/Characters/PA_Hero\n"
+            "  soft-ue-cli asset query-physics /Game/Characters/PA_Hero --bones thigh_l,hand_l --space component"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_aqp.add_argument("asset_path", help="PhysicsAsset asset path")
+    p_aqp.add_argument("--bones", metavar="A,B,C", help="Comma-separated bone names to report (default: every body)")
+    p_aqp.add_argument(
+        "--space",
+        choices=["body", "component"],
+        help="Space for shape transforms and constraint frames: body (default, relative to the bone) or component (reference pose)",
+    )
+    p_aqp.add_argument(
+        "--mesh",
+        dest="mesh_path",
+        help="SkeletalMesh for --space component (default: the PhysicsAsset's preview mesh). Ignored in body space.",
+    )
+    p_aqp.add_argument("--no-constraints", action="store_true", help="Omit constraints from the report")
+    p_aqp.set_defaults(func=cmd_asset_query_physics)
 
     p_smsc = sub.add_parser(
         "skeletal-mesh-socket-create",

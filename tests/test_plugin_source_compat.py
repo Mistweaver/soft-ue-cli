@@ -314,6 +314,37 @@ def test_insights_capture_starts_traces_without_console_string_parsing():
     assert '.utrace' in source
 
 
+def test_asset_query_physics_is_registered_and_avoids_version_specific_elements():
+    module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
+
+    assert '#include "Tools/Asset/PhysicsAssetQueryTool.h"' in module_source
+    assert "RegisterToolClass<UPhysicsAssetQueryTool>()" in module_source
+
+    # Level set and skinned element lists change between engine versions, so they are counted
+    # through GetElementCount() instead of being read by name.
+    assert "GetElementCount()" in tool_source
+    for element_list in ("LevelSetElems", "SkinnedLevelSetElems", "MLLevelSetElems", "SkinnedTriangleMeshElems"):
+        assert element_list not in tool_source
+
+    # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
+    assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
+    assert "PhysQuerySchemaProperty" in tool_source
+
+
+def test_asset_query_physics_constraint_frames_follow_space_and_mesh_is_body_space_noop():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
+
+    # Constraint frames are moved by their own bone's reference pose in component space,
+    # matching the shapes, instead of always staying relative to the bone.
+    assert "Frame * ComponentPose[BoneIndex]" in tool_source
+    assert "Instance.GetRefFrame(EConstraintFrame::Frame1), Instance.ConstraintBone1" in tool_source
+    assert "Instance.GetRefFrame(EConstraintFrame::Frame2), Instance.ConstraintBone2" in tool_source
+
+    # mesh_path only matters in component space, so body space warns instead of loading it.
+    assert "is used only with space 'component' and was ignored" in tool_source
+
+
 def test_anim_state_machine_inspect_is_registered_and_version_gated():
     module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimStateMachineInspectTool.cpp")
