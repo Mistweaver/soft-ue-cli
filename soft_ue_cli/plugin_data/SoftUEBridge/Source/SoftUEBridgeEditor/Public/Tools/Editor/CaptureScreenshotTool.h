@@ -6,6 +6,8 @@
 #include "Tools/BridgeToolBase.h"
 #include "CaptureScreenshotTool.generated.h"
 
+struct FBridgeImageOutputOptions;
+
 /**
  * Tool to capture screenshots of editor windows, tabs, regions, or the game viewport.
  *
@@ -45,46 +47,26 @@ public:
 private:
 	/**
 	 * Capture the PIE game viewport.
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
+	 * @param Options - Shared image format, size, color, and output settings
 	 * @return Tool result with image data or file path
 	 */
 	FBridgeToolResult CaptureViewport(
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
+		const FBridgeImageOutputOptions& Options);
 
 	/**
 	 * Capture the entire editor window.
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
+	 * @param Options - Shared image format, size, color, and output settings
 	 * @return Tool result with image data or file path
 	 */
 	FBridgeToolResult CaptureWindow(
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious,
+		const FBridgeImageOutputOptions& Options,
 		bool bSafeMode);
 
 	/**
 	 * Capture the composited PIE game viewport Slate widget, including UMG.
 	 */
 	FBridgeToolResult CapturePIEWindow(
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious,
+		const FBridgeImageOutputOptions& Options,
 		bool bSafeMode,
 		const FString& RequestedMode,
 		const FString& FallbackReason);
@@ -92,53 +74,32 @@ private:
 	/**
 	 * Capture a specific editor tab/panel.
 	 * @param TabName - Name of the tab to capture
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
+	 * @param Options - Shared image format, size, color, and output settings
 	 * @return Tool result with image data or file path
 	 */
 	FBridgeToolResult CaptureTab(
 		const FString& TabName,
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
+		const FBridgeImageOutputOptions& Options);
 
 	/**
 	 * Capture a specific rectangular region.
 	 * @param Region - Rectangle to capture [x, y, width, height]
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
+	 * @param Options - Shared image format, size, color, and output settings
 	 * @return Tool result with image data or file path
 	 */
 	FBridgeToolResult CaptureRegion(
 		const FIntRect& Region,
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
+		const FBridgeImageOutputOptions& Options);
 
 	/**
 	 * Capture screenshot from a specific window.
 	 * @param Window - Window to capture
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
+	 * @param Options - Shared image format, size, color, and output settings
 	 * @return Tool result with image data or file path
 	 */
 	FBridgeToolResult CaptureFromWindow(
 		TSharedPtr<SWindow> Window,
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious,
+		const FBridgeImageOutputOptions& Options,
 		TSharedPtr<FJsonObject> ExtraFields = nullptr);
 
 	/**
@@ -158,43 +119,15 @@ private:
 	TSharedPtr<SWidget> FindPIEGameViewportWidget() const;
 
 	/**
-	 * Compress raw RGBA image data to PNG or JPEG.
-	 * @param RawData - Raw RGBA pixel data
-	 * @param Width - Image width
-	 * @param Height - Image height
-	 * @param Format - Target format ("png" or "jpeg")
-	 * @return Compressed image data
-	 */
-	TArray<uint8> CompressImage(
-		const TArray<FColor>& RawData,
-		int32 Width,
-		int32 Height,
-		const FString& Format);
-
-	/**
-	 * Write image data to file or return as base64.
-	 * @param ImageData - Compressed image data
-	 * @param Format - Image format ("png" or "jpeg")
-	 * @param OutputMode - Output mode ("file" or "base64")
-	 * @param CaptureMode - Description of what was captured (for response message)
-	 * @return Tool result with file path or base64 data
+	 * Encode a capture through the shared image output and add the screenshot fields.
+	 * @param CaptureMode - Description of what was captured (for the response message)
+	 * @param ExtraFields - Mode-specific fields copied into the response
 	 */
 	FBridgeToolResult OutputImage(
-		const TArray<uint8>& ImageData,
-		const FString& Format,
-		const FString& OutputMode,
-		const FString& CaptureMode,
+		TArray<FColor>& RawData,
 		int32 Width,
 		int32 Height,
-		int32 OriginalWidth,
-		int32 OriginalHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious,
-		TSharedPtr<FJsonObject> ExtraFields = nullptr);
-
-	/**
-	 * Delete previous screenshot files.
-	 * @param TempDir - Directory to clean
-	 */
-	void CleanupPreviousScreenshots(const FString& TempDir);
+		const FBridgeImageOutputOptions& Options,
+		const FString& CaptureMode,
+		const TSharedPtr<FJsonObject>& ExtraFields = nullptr);
 };

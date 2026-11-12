@@ -6,177 +6,13 @@
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "UnrealClient.h"
-#include "HAL/FileManager.h"
-#include "HAL/PlatformProcess.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
-#include "Misc/Base64.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "Misc/SecureHash.h"
-#include "Modules/ModuleManager.h"
+#include "Utils/BridgeImageOutput.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
 #include "LevelEditorViewport.h"
 #include "RenderingThread.h"
 #endif
-
-namespace
-{
-	FString NormalizeColorMode(FString ColorMode)
-	{
-		ColorMode.TrimStartAndEndInline();
-		ColorMode.ToLowerInline();
-		return ColorMode.IsEmpty() ? TEXT("color") : ColorMode;
-	}
-
-	FIntPoint ResolveCaptureSize(
-		int32 OriginalWidth,
-		int32 OriginalHeight,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight)
-	{
-		float Scale = 1.0f;
-		if (TargetWidth > 0 && TargetHeight > 0)
-		{
-			Scale = FMath::Min(
-				static_cast<float>(TargetWidth) / static_cast<float>(OriginalWidth),
-				static_cast<float>(TargetHeight) / static_cast<float>(OriginalHeight));
-		}
-		else if (TargetWidth > 0)
-		{
-			Scale = static_cast<float>(TargetWidth) / static_cast<float>(OriginalWidth);
-		}
-		else if (TargetHeight > 0)
-		{
-			Scale = static_cast<float>(TargetHeight) / static_cast<float>(OriginalHeight);
-		}
-		else
-		{
-			Scale = ScalePercent / 100.0f;
-		}
-
-		Scale = FMath::Clamp(Scale, 0.0f, 1.0f);
-		if (Scale >= 1.0f)
-		{
-			return FIntPoint(OriginalWidth, OriginalHeight);
-		}
-
-		return FIntPoint(
-			FMath::Max(1, FMath::RoundToInt(static_cast<float>(OriginalWidth) * Scale)),
-			FMath::Max(1, FMath::RoundToInt(static_cast<float>(OriginalHeight) * Scale)));
-	}
-
-	bool ResizeImage(TArray<FColor>& ImageData, int32& Width, int32& Height, const FIntPoint& TargetSize)
-	{
-		if (TargetSize.X == Width && TargetSize.Y == Height)
-		{
-			return true;
-		}
-
-		if (TargetSize.X <= 0 || TargetSize.Y <= 0 || Width <= 0 || Height <= 0)
-		{
-			return false;
-		}
-
-		TArray<FColor> ResizedData;
-		ResizedData.SetNumUninitialized(TargetSize.X * TargetSize.Y);
-
-		for (int32 Y = 0; Y < TargetSize.Y; ++Y)
-		{
-			const int32 SourceY = FMath::Clamp(
-				FMath::FloorToInt((static_cast<float>(Y) + 0.5f) * static_cast<float>(Height) / static_cast<float>(TargetSize.Y)),
-				0,
-				Height - 1);
-			for (int32 X = 0; X < TargetSize.X; ++X)
-			{
-				const int32 SourceX = FMath::Clamp(
-					FMath::FloorToInt((static_cast<float>(X) + 0.5f) * static_cast<float>(Width) / static_cast<float>(TargetSize.X)),
-					0,
-					Width - 1);
-				ResizedData[Y * TargetSize.X + X] = ImageData[SourceY * Width + SourceX];
-			}
-		}
-
-		ImageData = MoveTemp(ResizedData);
-		Width = TargetSize.X;
-		Height = TargetSize.Y;
-		return true;
-	}
-
-	void ApplyColorMode(TArray<FColor>& ImageData, const FString& ColorMode)
-	{
-		for (FColor& Pixel : ImageData)
-		{
-			Pixel.A = 255;
-			if (ColorMode == TEXT("color"))
-			{
-				continue;
-			}
-
-			const uint8 Luma = static_cast<uint8>((77 * Pixel.R + 150 * Pixel.G + 29 * Pixel.B) >> 8);
-			const uint8 Value = (ColorMode == TEXT("monochrome"))
-				? (Luma >= 128 ? 255 : 0)
-				: Luma;
-			Pixel.R = Value;
-			Pixel.G = Value;
-			Pixel.B = Value;
-		}
-	}
-
-	bool ApplyImageTransform(
-		TArray<FColor>& ImageData,
-		int32& Width,
-		int32& Height,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		FString& OutColorMode,
-		FString& OutError)
-	{
-		if (Width <= 0 || Height <= 0 || ImageData.Num() != Width * Height)
-		{
-			OutError = TEXT("Invalid image dimensions");
-			return false;
-		}
-
-		if (ScalePercent <= 0.0f)
-		{
-			OutError = TEXT("'scale' must be greater than 0");
-			return false;
-		}
-
-		if (TargetWidth < 0 || TargetHeight < 0)
-		{
-			OutError = TEXT("'width' and 'height' must be greater than or equal to 0");
-			return false;
-		}
-
-		OutColorMode = NormalizeColorMode(ColorMode);
-		if (OutColorMode != TEXT("color") &&
-			OutColorMode != TEXT("grayscale") &&
-			OutColorMode != TEXT("monochrome"))
-		{
-			OutError = FString::Printf(
-				TEXT("Invalid color_mode '%s'. Valid values: color, grayscale, monochrome"),
-				*ColorMode);
-			return false;
-		}
-
-		const FIntPoint TargetSize = ResolveCaptureSize(Width, Height, ScalePercent, TargetWidth, TargetHeight);
-		if (!ResizeImage(ImageData, Width, Height, TargetSize))
-		{
-			OutError = TEXT("Failed to resize viewport screenshot");
-			return false;
-		}
-
-		ApplyColorMode(ImageData, OutColorMode);
-		return true;
-	}
-}
 
 TMap<FString, FBridgeSchemaProperty> UCaptureViewportTool::GetInputSchema() const
 {
@@ -242,18 +78,12 @@ FBridgeToolResult UCaptureViewportTool::Execute(
 	const FBridgeToolContext& Context)
 {
 	const FString Source = GetStringArgOrDefault(Arguments, TEXT("source"), TEXT("auto"));
-	const FString Format = GetStringArgOrDefault(Arguments, TEXT("format"), TEXT("png"));
-	const FString OutputMode = GetStringArgOrDefault(Arguments, TEXT("output"), TEXT("file"));
-	const float ScalePercent = GetFloatArgOrDefault(Arguments, TEXT("scale"), 100.0f);
-	const int32 TargetWidth = GetIntArgOrDefault(Arguments, TEXT("width"), 0);
-	const int32 TargetHeight = GetIntArgOrDefault(Arguments, TEXT("height"), 0);
-	const FString ColorMode = GetStringArgOrDefault(Arguments, TEXT("color_mode"), TEXT("color"));
-	const bool bCleanupPrevious = GetBoolArgOrDefault(Arguments, TEXT("cleanup_previous"), false);
+	const FBridgeImageOutputOptions Options = FBridgeImageOutputOptions::FromArguments(Arguments);
 
 	if (Source == TEXT("editor"))
 	{
 #if WITH_EDITOR
-		return CaptureEditorViewport(Format, OutputMode, ScalePercent, TargetWidth, TargetHeight, ColorMode, bCleanupPrevious);
+		return CaptureEditorViewport(Options);
 #else
 		return FBridgeToolResult::Error(TEXT("Editor viewport capture is only available in editor builds"));
 #endif
@@ -261,20 +91,20 @@ FBridgeToolResult UCaptureViewportTool::Execute(
 
 	if (Source == TEXT("game"))
 	{
-		return CaptureGameViewport(Format, OutputMode, ScalePercent, TargetWidth, TargetHeight, ColorMode, bCleanupPrevious);
+		return CaptureGameViewport(Options);
 	}
 
 	if (Source == TEXT("auto"))
 	{
 		// Auto-detect: try game viewport first, fall back to editor viewport
-		FBridgeToolResult GameResult = CaptureGameViewport(Format, OutputMode, ScalePercent, TargetWidth, TargetHeight, ColorMode, bCleanupPrevious);
+		FBridgeToolResult GameResult = CaptureGameViewport(Options);
 		if (!GameResult.bIsError)
 		{
 			return GameResult;
 		}
 
 #if WITH_EDITOR
-		return CaptureEditorViewport(Format, OutputMode, ScalePercent, TargetWidth, TargetHeight, ColorMode, bCleanupPrevious);
+		return CaptureEditorViewport(Options);
 #else
 		return GameResult; // Return the game viewport error in non-editor builds
 #endif
@@ -284,14 +114,7 @@ FBridgeToolResult UCaptureViewportTool::Execute(
 		TEXT("Unknown source '%s'. Valid values: 'auto', 'game', 'editor'"), *Source));
 }
 
-FBridgeToolResult UCaptureViewportTool::CaptureGameViewport(
-	const FString& Format,
-	const FString& OutputMode,
-	float ScalePercent,
-	int32 TargetWidth,
-	int32 TargetHeight,
-	const FString& ColorMode,
-	bool bCleanupPrevious)
+FBridgeToolResult UCaptureViewportTool::CaptureGameViewport(const FBridgeImageOutputOptions& Options)
 {
 	// Find a game viewport — works for both PIE and standalone
 	FViewport* GameViewport = nullptr;
@@ -333,56 +156,11 @@ FBridgeToolResult UCaptureViewportTool::CaptureGameViewport(
 		return FBridgeToolResult::Error(TEXT("Game viewport has no valid image data"));
 	}
 
-	const int32 OriginalWidth = ViewportSize.X;
-	const int32 OriginalHeight = ViewportSize.Y;
-	int32 OutputWidth = OriginalWidth;
-	int32 OutputHeight = OriginalHeight;
-	FString NormalizedColorMode;
-	FString TransformError;
-	if (!ApplyImageTransform(
-		RawData,
-		OutputWidth,
-		OutputHeight,
-		ScalePercent,
-		TargetWidth,
-		TargetHeight,
-		ColorMode,
-		NormalizedColorMode,
-		TransformError))
-	{
-		return FBridgeToolResult::Error(TransformError);
-	}
-
-	TArray<uint8> ImageData = CompressImage(RawData, OutputWidth, OutputHeight, Format);
-	if (ImageData.Num() == 0)
-	{
-		return FBridgeToolResult::Error(TEXT("Failed to compress viewport screenshot"));
-	}
-
-	UE_LOG(LogSoftUEBridge, Log, TEXT("capture-viewport: Captured %s viewport %dx%d -> %dx%d as %s/%s (%d bytes)"),
-		*WorldTypeName, OriginalWidth, OriginalHeight, OutputWidth, OutputHeight, *Format, *NormalizedColorMode, ImageData.Num());
-
-	return OutputImage(
-		ImageData,
-		Format,
-		OutputMode,
-		OutputWidth,
-		OutputHeight,
-		OriginalWidth,
-		OriginalHeight,
-		NormalizedColorMode,
-		bCleanupPrevious);
+	return OutputCapture(RawData, ViewportSize, Options, WorldTypeName);
 }
 
 #if WITH_EDITOR
-FBridgeToolResult UCaptureViewportTool::CaptureEditorViewport(
-	const FString& Format,
-	const FString& OutputMode,
-	float ScalePercent,
-	int32 TargetWidth,
-	int32 TargetHeight,
-	const FString& ColorMode,
-	bool bCleanupPrevious)
+FBridgeToolResult UCaptureViewportTool::CaptureEditorViewport(const FBridgeImageOutputOptions& Options)
 {
 	if (!GEditor)
 	{
@@ -419,162 +197,39 @@ FBridgeToolResult UCaptureViewportTool::CaptureEditorViewport(
 		return FBridgeToolResult::Error(TEXT("Editor viewport returned no pixel data"));
 	}
 
-	const int32 OriginalWidth = ViewportSize.X;
-	const int32 OriginalHeight = ViewportSize.Y;
-	int32 OutputWidth = OriginalWidth;
-	int32 OutputHeight = OriginalHeight;
-	FString NormalizedColorMode;
-	FString TransformError;
-	if (!ApplyImageTransform(
-		RawData,
-		OutputWidth,
-		OutputHeight,
-		ScalePercent,
-		TargetWidth,
-		TargetHeight,
-		ColorMode,
-		NormalizedColorMode,
-		TransformError))
-	{
-		return FBridgeToolResult::Error(TransformError);
-	}
-
-	TArray<uint8> ImageData = CompressImage(RawData, OutputWidth, OutputHeight, Format);
-	if (ImageData.Num() == 0)
-	{
-		return FBridgeToolResult::Error(TEXT("Failed to compress editor viewport screenshot"));
-	}
-
-	UE_LOG(LogSoftUEBridge, Log, TEXT("capture-viewport: Captured editor viewport %dx%d -> %dx%d as %s/%s (%d bytes)"),
-		OriginalWidth, OriginalHeight, OutputWidth, OutputHeight, *Format, *NormalizedColorMode, ImageData.Num());
-
-	return OutputImage(
-		ImageData,
-		Format,
-		OutputMode,
-		OutputWidth,
-		OutputHeight,
-		OriginalWidth,
-		OriginalHeight,
-		NormalizedColorMode,
-		bCleanupPrevious);
+	return OutputCapture(RawData, ViewportSize, Options, TEXT("editor"));
 }
 #endif
 
-TArray<uint8> UCaptureViewportTool::CompressImage(
+FBridgeToolResult UCaptureViewportTool::OutputCapture(
 	TArray<FColor>& RawData,
-	int32 Width,
-	int32 Height,
-	const FString& Format)
+	const FIntPoint& ViewportSize,
+	const FBridgeImageOutputOptions& Options,
+	const FString& SourceName)
 {
-	// Validate pixel count matches dimensions (can diverge if viewport resizes mid-capture)
-	if (RawData.Num() != Width * Height)
+	FString Error;
+	TSharedPtr<FJsonObject> Result = SoftUE::ImageOutput::EncodeCapture(
+		RawData, ViewportSize.X, ViewportSize.Y, Options, TEXT("viewport_"), Error);
+	if (!Result.IsValid())
 	{
-		return {};
+		return FBridgeToolResult::Error(Error);
 	}
 
-	IImageWrapperModule& ImageWrapperModule =
-		FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-
-	const EImageFormat ImageFormat = (Format == TEXT("jpeg")) ? EImageFormat::JPEG : EImageFormat::PNG;
-	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(ImageFormat);
-
-	if (!ImageWrapper.IsValid())
+	FString FilePath;
+	if (Result->TryGetStringField(TEXT("file_path"), FilePath))
 	{
-		return {};
+		Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Viewport screenshot saved to %s"), *FilePath));
 	}
 
-	// DX12/Vulkan backbuffers may have undefined alpha (often 0),
-	// which produces a fully transparent PNG, so force alpha to 255.
-	for (FColor& Pixel : RawData)
-	{
-		Pixel.A = 255;
-	}
+	UE_LOG(LogSoftUEBridge, Log, TEXT("capture-viewport: Captured %s viewport %dx%d -> %dx%d as %s/%s (%d bytes)"),
+		*SourceName,
+		ViewportSize.X,
+		ViewportSize.Y,
+		static_cast<int32>(Result->GetNumberField(TEXT("width"))),
+		static_cast<int32>(Result->GetNumberField(TEXT("height"))),
+		*Options.Format,
+		*Result->GetStringField(TEXT("color_mode")),
+		static_cast<int32>(Result->GetNumberField(TEXT("size_bytes"))));
 
-	// FColor is BGRA in memory on little-endian; pass directly using ERGBFormat::BGRA
-	if (!ImageWrapper->SetRaw(RawData.GetData(), RawData.Num() * 4, Width, Height, ERGBFormat::BGRA, 8))
-	{
-		return {};
-	}
-
-	const int32 Quality = (Format == TEXT("jpeg")) ? 85 : 0;
-	const TArray<uint8, FDefaultAllocator64> CompressedData64 = ImageWrapper->GetCompressed(Quality);
-	TArray<uint8> Result;
-	Result.Append(CompressedData64);
-	return Result;
-}
-
-FBridgeToolResult UCaptureViewportTool::OutputImage(
-	const TArray<uint8>& ImageData,
-	const FString& Format,
-	const FString& OutputMode,
-	int32 Width,
-	int32 Height,
-	int32 OriginalWidth,
-	int32 OriginalHeight,
-	const FString& ColorMode,
-	bool bCleanupPrevious)
-{
-	// Base64 mode
-	if (OutputMode == TEXT("base64"))
-	{
-		const FString MimeType = Format == TEXT("jpeg") ? TEXT("image/jpeg") : TEXT("image/png");
-		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-		Result->SetStringField(TEXT("image_base64"), FBase64::Encode(ImageData));
-		Result->SetStringField(TEXT("mime_type"), MimeType);
-		Result->SetStringField(TEXT("mode"), TEXT("base64"));
-		Result->SetStringField(TEXT("format"), Format);
-		Result->SetNumberField(TEXT("size_bytes"), ImageData.Num());
-		Result->SetNumberField(TEXT("width"), Width);
-		Result->SetNumberField(TEXT("height"), Height);
-		Result->SetNumberField(TEXT("original_width"), OriginalWidth);
-		Result->SetNumberField(TEXT("original_height"), OriginalHeight);
-		Result->SetStringField(TEXT("color_mode"), ColorMode);
-		return FBridgeToolResult::Json(Result);
-	}
-
-	// File mode — save to temp directory
-	const FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("soft-ue-bridge"));
-	IFileManager::Get().MakeDirectory(*TempDir, true);
-
-	if (bCleanupPrevious)
-	{
-		CleanupPreviousCaptures(TempDir);
-	}
-
-	const FString Hash = FMD5::HashBytes(ImageData.GetData(), FMath::Min(1024, ImageData.Num()));
-	const FString FileName = FString::Printf(TEXT("viewport_%s.%s"), *Hash.Left(8), *Format);
-	const FString FilePath = FPaths::Combine(TempDir, FileName);
-
-	if (!FFileHelper::SaveArrayToFile(ImageData, *FilePath))
-	{
-		return FBridgeToolResult::Error(FString::Printf(
-			TEXT("Failed to write viewport capture to %s"), *FilePath));
-	}
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetStringField(TEXT("mode"), TEXT("file"));
-	Result->SetStringField(TEXT("file_path"), FilePath);
-	Result->SetStringField(TEXT("format"), Format);
-	Result->SetNumberField(TEXT("size_bytes"), ImageData.Num());
-	Result->SetNumberField(TEXT("width"), Width);
-	Result->SetNumberField(TEXT("height"), Height);
-	Result->SetNumberField(TEXT("original_width"), OriginalWidth);
-	Result->SetNumberField(TEXT("original_height"), OriginalHeight);
-	Result->SetStringField(TEXT("color_mode"), ColorMode);
-	Result->SetStringField(TEXT("message"), FString::Printf(
-		TEXT("Viewport screenshot saved to %s"), *FilePath));
 	return FBridgeToolResult::Json(Result);
-}
-
-void UCaptureViewportTool::CleanupPreviousCaptures(const FString& TempDir)
-{
-	TArray<FString> FoundFiles;
-	IFileManager::Get().FindFiles(FoundFiles, *(TempDir / TEXT("viewport_*")), true, false);
-
-	for (const FString& FileName : FoundFiles)
-	{
-		const FString FullPath = FPaths::Combine(TempDir, FileName);
-		IFileManager::Get().Delete(*FullPath, false, true);
-	}
 }
