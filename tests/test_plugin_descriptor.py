@@ -1271,41 +1271,50 @@ def test_datatable_row_tool_uses_field_level_bridge_deserializer():
     assert "failed_fields" in source
 
 
-def test_editor_screenshot_compression_validates_dimensions_and_pixel_count():
-    source = _plugin_source_path(
-        "Source/SoftUEBridgeEditor/Private/Tools/Editor/CaptureScreenshotTool.cpp"
+def test_capture_compression_validates_dimensions_and_pixel_count():
+    shared = _plugin_source_path(
+        "Source/SoftUEBridge/Private/Utils/BridgeImageOutput.cpp"
     ).read_text(encoding="utf-8")
 
-    assert "Width <= 0 || Height <= 0" in source
-    assert "const int64 ExpectedPixelCount" in source
-    assert "RawData.Num() != ExpectedPixelCount" in source
-    assert "ExpectedPixelCount * 4" in source
+    assert "Width <= 0 || Height <= 0" in shared
+    assert "const int64 ExpectedPixelCount" in shared
+    assert "Pixels.Num() != ExpectedPixelCount" in shared
+    assert "ExpectedPixelCount > MAX_int32 / 4" in shared
 
 
 def test_viewport_capture_supports_resize_and_color_transform_options():
     source = _plugin_source_path(
         "Source/SoftUEBridge/Private/Tools/CaptureViewportTool.cpp"
     ).read_text(encoding="utf-8")
+    shared = _plugin_source_path(
+        "Source/SoftUEBridge/Private/Utils/BridgeImageOutput.cpp"
+    ).read_text(encoding="utf-8")
 
     for field in ("scale", "width", "height", "color_mode", "cleanup_previous"):
         assert f'Schema.Add(TEXT("{field}")' in source
 
-    assert "ApplyImageTransform" in source
-    assert "ResizeImage" in source
-    assert "ApplyColorMode" in source
-    assert 'SetNumberField(TEXT("width")' in source
-    assert 'SetNumberField(TEXT("original_width")' in source
-    assert 'SetStringField(TEXT("color_mode")' in source
+    assert "SoftUE::ImageOutput::EncodeCapture(" in source
+    assert "ApplyImageTransform(Pixels, Width, Height, Options" in shared
+    assert "ImageOutputResize(" in shared
+    assert "ImageOutputApplyColorMode(" in shared
+    assert 'SetNumberField(TEXT("width")' in shared
+    assert 'SetNumberField(TEXT("original_width")' in shared
+    assert 'SetStringField(TEXT("color_mode")' in shared
 
 
 def test_viewport_capture_file_output_does_not_cleanup_by_default():
-    source = _plugin_source_path(
-        "Source/SoftUEBridge/Private/Tools/CaptureViewportTool.cpp"
+    shared = _plugin_source_path(
+        "Source/SoftUEBridge/Private/Utils/BridgeImageOutput.cpp"
     ).read_text(encoding="utf-8")
 
-    assert "if (bCleanupPrevious)" in source
-    assert "CleanupPreviousCaptures(TempDir);" not in source.replace(
-        "if (bCleanupPrevious)\n\t{\n\t\tCleanupPreviousCaptures(TempDir);\n\t}", ""
+    options_header = _plugin_source_path(
+        "Source/SoftUEBridge/Public/Utils/BridgeImageOutput.h"
+    ).read_text(encoding="utf-8")
+
+    assert "bool bCleanupPrevious = false;" in options_header
+    assert "if (Options.bCleanupPrevious)" in shared
+    assert "ImageOutputDeletePrevious(Directory, FilePrefix);" not in shared.replace(
+        "if (Options.bCleanupPrevious)\n\t\t{\n\t\t\tImageOutputDeletePrevious(Directory, FilePrefix);\n\t\t}", ""
     )
 
 
@@ -1313,15 +1322,19 @@ def test_editor_screenshot_forwards_viewport_transform_options():
     source = _plugin_source_path(
         "Source/SoftUEBridgeEditor/Private/Tools/Editor/CaptureScreenshotTool.cpp"
     ).read_text(encoding="utf-8")
+    shared = _plugin_source_path(
+        "Source/SoftUEBridge/Private/Utils/BridgeImageOutput.cpp"
+    ).read_text(encoding="utf-8")
 
     for field in ("scale", "width", "height", "color_mode", "cleanup_previous"):
         assert f'Schema.Add(TEXT("{field}")' in source
 
-    assert 'Args->SetNumberField(TEXT("scale")' in source
-    assert 'Args->SetNumberField(TEXT("width")' in source
-    assert 'Args->SetNumberField(TEXT("height")' in source
-    assert 'Args->SetStringField(TEXT("color_mode")' in source
-    assert 'Args->SetBoolField(TEXT("cleanup_previous")' in source
+    assert "Options.WriteArguments(Args);" in source
+    assert 'Arguments->SetNumberField(TEXT("scale")' in shared
+    assert 'Arguments->SetNumberField(TEXT("width")' in shared
+    assert 'Arguments->SetNumberField(TEXT("height")' in shared
+    assert 'Arguments->SetStringField(TEXT("color_mode")' in shared
+    assert 'Arguments->SetBoolField(TEXT("cleanup_previous")' in shared
 
 
 def test_bridge_tools_declare_safe_execution_context_metadata():
@@ -1371,7 +1384,7 @@ def test_window_screenshot_avoids_unsafe_pie_world_rendering_path():
     assert "IsUnsafeWindowScreenshotDuringPIE" in source
     assert "bDisableWorldRendering" in source
     assert "falling back to viewport capture" in source
-    assert "return CaptureViewport(Format, OutputMode, ScalePercent, TargetWidth, TargetHeight, ColorMode, bCleanupPrevious)" in source
+    assert "return CaptureViewport(Options);" in source
 
 
 def test_apply_widget_tree_tool_is_explicitly_registered_and_supports_designer_spec():

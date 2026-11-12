@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Tools/BridgeToolBase.h"
+#include "Utils/BridgeImageOutput.h"
 #include "CaptureViewportTool.generated.h"
 
 /**
@@ -29,42 +30,16 @@ public:
 		const FBridgeToolContext& Context) override;
 
 private:
-	FBridgeToolResult CaptureGameViewport(
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
+	FBridgeToolResult CaptureGameViewport(const FBridgeImageOutputOptions& Options);
 
 #if WITH_EDITOR
-	FBridgeToolResult CaptureEditorViewport(
-		const FString& Format,
-		const FString& OutputMode,
-		float ScalePercent,
-		int32 TargetWidth,
-		int32 TargetHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
+	FBridgeToolResult CaptureEditorViewport(const FBridgeImageOutputOptions& Options);
 #endif
 
-	TArray<uint8> CompressImage(
+	/** Encodes the pixels and adds the viewport-specific message. */
+	FBridgeToolResult OutputCapture(
 		TArray<FColor>& RawData,
-		int32 Width,
-		int32 Height,
-		const FString& Format);
-
-	FBridgeToolResult OutputImage(
-		const TArray<uint8>& ImageData,
-		const FString& Format,
-		const FString& OutputMode,
-		int32 Width,
-		int32 Height,
-		int32 OriginalWidth,
-		int32 OriginalHeight,
-		const FString& ColorMode,
-		bool bCleanupPrevious);
-
-	void CleanupPreviousCaptures(const FString& TempDir);
+		const FIntPoint& ViewportSize,
+		const FBridgeImageOutputOptions& Options,
+		const FString& SourceName);
 };
