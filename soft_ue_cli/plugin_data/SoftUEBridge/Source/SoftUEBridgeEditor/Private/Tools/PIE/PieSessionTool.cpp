@@ -815,7 +815,7 @@ FBridgeToolResult UPieSessionTool::ExecuteWaitFor(const TSharedPtr<FJsonObject>&
 		}
 
 		// Find actor
-		AActor* Actor = FindActorByName(PIEWorld, ActorName);
+		AActor* Actor = FindActorByNameOrLabel(PIEWorld, ActorName);
 		if (!Actor)
 		{
 			// Actor might not exist yet, keep waiting
@@ -922,18 +922,6 @@ FBridgeToolResult UPieSessionTool::ExecuteWaitFor(const TSharedPtr<FJsonObject>&
 	}
 
 	return FBridgeToolResult::Json(Result);
-}
-
-AActor* UPieSessionTool::FindActorByName(UWorld* World, const FString& ActorName) const
-{
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		if ((*It)->GetName().Equals(ActorName, ESearchCase::IgnoreCase))
-		{
-			return *It;
-		}
-	}
-	return nullptr;
 }
 
 TSharedPtr<FJsonValue> UPieSessionTool::GetActorProperty(AActor* Actor, const FString& PropertyName) const

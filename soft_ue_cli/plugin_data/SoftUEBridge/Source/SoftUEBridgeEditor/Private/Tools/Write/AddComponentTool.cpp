@@ -6,7 +6,6 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
-#include "EngineUtils.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
@@ -82,22 +81,7 @@ FBridgeToolResult UAddComponentTool::Execute(
 	}
 
 	// Find the actor
-	AActor* FoundActor = nullptr;
-
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* Actor = *It;
-		if (Actor)
-		{
-			if (Actor->GetName().Equals(ActorName, ESearchCase::IgnoreCase) ||
-				Actor->GetActorLabel().Equals(ActorName, ESearchCase::IgnoreCase))
-			{
-				FoundActor = Actor;
-				break;
-			}
-		}
-	}
-
+	AActor* FoundActor = FindActorByNameOrLabel(World, ActorName);
 	if (!FoundActor)
 	{
 		return FBridgeToolResult::Error(FString::Printf(TEXT("Actor not found: %s"), *ActorName));

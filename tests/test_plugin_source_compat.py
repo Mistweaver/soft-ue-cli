@@ -364,3 +364,54 @@ def test_anim_state_machine_inspect_is_registered_and_version_gated():
     # A child AnimBlueprint has no graphs, so an empty result points at its parent.
     assert "UAnimBlueprint::GetParentAnimBlueprint(AnimBlueprint)" in tool_source
     assert '"parent_anim_blueprint"' in tool_source
+
+
+def test_actor_lookup_is_shared_through_the_tool_base():
+    base_header = _read("SoftUEBridge/Public/Tools/BridgeToolBase.h")
+    base_source = _read("SoftUEBridge/Private/Tools/BridgeToolBase.cpp")
+
+    for helper in ("FindActorByNameOrLabel", "FindActorByPattern", "FindComponentByName"):
+        assert f"static {'UActorComponent' if helper == 'FindComponentByName' else 'AActor'}* {helper}(" in base_header
+        assert f"UBridgeToolBase::{helper}(" in base_source
+
+    # Exact lookups never go through wildcard matching, so a pattern such as "*" cannot reach
+    # every actor through the delete and modify tools.
+    exact = base_source.split("UBridgeToolBase::FindActorByNameOrLabel(", 1)[1].split("\n}\n", 1)[0]
+    assert "MatchesWildcard" not in exact
+
+    exact_callers = {
+        "SoftUEBridgeEditor/Private/Tools/Write/AddComponentTool.cpp": "FindActorByNameOrLabel(World, ActorName)",
+        "SoftUEBridgeEditor/Private/Tools/Write/BatchDeleteActorTool.cpp": "FindActorByNameOrLabel(World, ActorName)",
+        "SoftUEBridgeEditor/Private/Tools/Write/BatchModifyActorTool.cpp": "FindActorByNameOrLabel(World, ActorName)",
+        "SoftUEBridgeEditor/Private/Tools/PIE/PieSessionTool.cpp": "FindActorByNameOrLabel(PIEWorld, ActorName)",
+    }
+    pattern_callers = (
+        "SoftUEBridge/Private/Tools/CallFunctionTool.cpp",
+        "SoftUEBridge/Private/Tools/GetPropertyTool.cpp",
+        "SoftUEBridge/Private/Tools/SetPropertyTool.cpp",
+        "SoftUEBridge/Private/Tools/QueryLevelTool.cpp",
+    )
+
+    for path, call in exact_callers.items():
+        source = _read(path)
+        assert call in source, path
+        assert "FindActorByPattern" not in source, path
+        assert "::FindActorByName" not in source, path
+
+    for path in pattern_callers:
+        source = _read(path)
+        assert "FindActorByPattern(World, ActorName)" in source, path
+        assert "MatchesWildcard(GetActorLabelSafe(A), ActorName)" not in source, path
+        assert "MatchesWildcard(GetActorLabelSafe(Actor), ActorName)" not in source, path
+
+    for path in ("SoftUEBridge/Private/Tools/GetPropertyTool.cpp", "SoftUEBridge/Private/Tools/SetPropertyTool.cpp"):
+        source = _read(path)
+        assert "FindComponentByName(Actor, CompName)" in source, path
+        assert "C->GetName().Equals(CompName" not in source, path
+
+    for header in (
+        "SoftUEBridgeEditor/Public/Tools/Write/BatchDeleteActorTool.h",
+        "SoftUEBridgeEditor/Public/Tools/Write/BatchModifyActorTool.h",
+        "SoftUEBridgeEditor/Public/Tools/PIE/PieSessionTool.h",
+    ):
+        assert "FindActorByName" not in _read(header), header

@@ -19,7 +19,4 @@ public:
 	virtual FBridgeToolResult Execute(
 		const TSharedPtr<FJsonObject>& Arguments,
 		const FBridgeToolContext& Context) override;
-
-private:
-	AActor* FindActorByNameOrLabel(UWorld* World, const FString& ActorName) const;
 };
