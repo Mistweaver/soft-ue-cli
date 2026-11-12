@@ -199,7 +199,8 @@ AActor* UBridgeToolBase::FindActorByNameOrLabel(UWorld* World, const FString& Na
 
 AActor* UBridgeToolBase::FindActorByPattern(UWorld* World, const FString& Pattern)
 {
-	if (!World) return nullptr;
+	// MatchesWildcard treats an empty pattern as "match anything", which would hand back an arbitrary actor.
+	if (!World || Pattern.IsEmpty()) return nullptr;
 
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{

@@ -370,14 +370,26 @@ def test_actor_lookup_is_shared_through_the_tool_base():
     base_header = _read("SoftUEBridge/Public/Tools/BridgeToolBase.h")
     base_source = _read("SoftUEBridge/Private/Tools/BridgeToolBase.cpp")
 
-    for helper in ("FindActorByNameOrLabel", "FindActorByPattern", "FindComponentByName"):
-        assert f"static {'UActorComponent' if helper == 'FindComponentByName' else 'AActor'}* {helper}(" in base_header
+    helper_return_types = {
+        "FindActorByNameOrLabel": "AActor",
+        "FindActorByPattern": "AActor",
+        "FindComponentByName": "UActorComponent",
+    }
+    for helper, return_type in helper_return_types.items():
+        assert f"static {return_type}* {helper}(" in base_header
         assert f"UBridgeToolBase::{helper}(" in base_source
+
+    def helper_body(helper):
+        return base_source.split(f"UBridgeToolBase::{helper}(", 1)[1].split("\n}\n", 1)[0]
 
     # Exact lookups never go through wildcard matching, so a pattern such as "*" cannot reach
     # every actor through the delete and modify tools.
-    exact = base_source.split("UBridgeToolBase::FindActorByNameOrLabel(", 1)[1].split("\n}\n", 1)[0]
-    assert "MatchesWildcard" not in exact
+    assert "MatchesWildcard" not in helper_body("FindActorByNameOrLabel")
+
+    # Both actor lookups reject an empty name. MatchesWildcard matches anything for an empty
+    # pattern, so without the guard a missing actor_name would resolve to an arbitrary actor.
+    assert "NameOrLabel.IsEmpty()" in helper_body("FindActorByNameOrLabel")
+    assert "Pattern.IsEmpty()" in helper_body("FindActorByPattern")
 
     exact_callers = {
         "SoftUEBridgeEditor/Private/Tools/Write/AddComponentTool.cpp": "FindActorByNameOrLabel(World, ActorName)",

@@ -98,7 +98,10 @@ protected:
 	 */
 	static AActor* FindActorByNameOrLabel(UWorld* World, const FString& NameOrLabel);
 
-	/** First actor whose name or label matches Pattern under the MatchesWildcard rules. */
+	/**
+	 * First actor whose name or label matches Pattern under the MatchesWildcard rules. An empty Pattern
+	 * matches nothing, so a missing actor name cannot resolve to an arbitrary actor.
+	 */
 	static AActor* FindActorByPattern(UWorld* World, const FString& Pattern);
 
 	/** First component on Actor whose object name equals ComponentName, ignoring case. */
