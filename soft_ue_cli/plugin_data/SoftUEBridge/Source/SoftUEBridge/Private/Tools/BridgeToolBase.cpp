@@ -187,14 +187,35 @@ AActor* UBridgeToolBase::FindActorByNameOrLabel(UWorld* World, const FString& Na
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
-		if (!Actor) continue;
-		if (Actor->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase) ||
-			GetActorLabelSafe(Actor).Equals(NameOrLabel, ESearchCase::IgnoreCase))
+		if (ActorMatchesNameOrLabel(Actor, NameOrLabel))
 		{
 			return Actor;
 		}
 	}
 	return nullptr;
+}
+
+TArray<AActor*> UBridgeToolBase::FindActorsByNameOrLabel(UWorld* World, const FString& NameOrLabel)
+{
+	TArray<AActor*> Matches;
+	if (!World || NameOrLabel.IsEmpty()) return Matches;
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (ActorMatchesNameOrLabel(Actor, NameOrLabel))
+		{
+			Matches.Add(Actor);
+		}
+	}
+	return Matches;
+}
+
+bool UBridgeToolBase::ActorMatchesNameOrLabel(const AActor* Actor, const FString& NameOrLabel)
+{
+	return Actor
+		&& (Actor->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase)
+			|| GetActorLabelSafe(Actor).Equals(NameOrLabel, ESearchCase::IgnoreCase));
 }
 
 AActor* UBridgeToolBase::FindActorByPattern(UWorld* World, const FString& Pattern)

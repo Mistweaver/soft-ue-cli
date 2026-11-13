@@ -42,6 +42,7 @@ from soft_ue_cli.__main__ import (
     cmd_build_and_relaunch,
     cmd_call_function,
     cmd_capture_pie_screenshot,
+    cmd_capture_scene,
     cmd_capture_screenshot,
     cmd_commands,
     cmd_compile_co,
@@ -2877,6 +2878,133 @@ def test_cmd_capture_screenshot_copies_to_requested_output_file(tmp_path, capsys
     assert output.read_bytes() == b"png-bytes"
     assert payload["file_path"] == str(output)
     assert payload["bridge_file_path"] == str(source)
+
+
+
+def test_cmd_capture_scene_forwards_every_option():
+    parser = build_parser()
+    args = parser.parse_args([
+        "capture", "scene",
+        "--target", "BP_Hero.Mesh",
+        "--angles", "front, three-quarter,top",
+        "--distance", "150",
+        "--fov", "45",
+        "--yaw-offset", "-90",
+        "--width", "512",
+        "--height", "256",
+        "--isolate",
+        "--world", "pie",
+        "--pie-instance", "1",
+        "--format", "jpeg",
+        "--scale", "50",
+        "--color-mode", "grayscale",
+        "--cleanup-previous",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"captures": []}) as mock_run:
+        cmd_capture_scene(args)
+
+    mock_run.assert_called_once_with(
+        "capture-scene",
+        {
+            "target": "BP_Hero.Mesh",
+            "angles": ["front", "three-quarter", "top"],
+            "distance": 150.0,
+            "fov": 45.0,
+            "yaw_offset": -90.0,
+            "isolate": True,
+            "world": "pie",
+            "pie_instance": 1,
+            "format": "jpeg",
+            "scale": 50.0,
+            "width": 512,
+            "height": 256,
+            "color_mode": "grayscale",
+            "cleanup_previous": True,
+        },
+    )
+
+
+def test_cmd_capture_scene_sends_only_the_target_by_default():
+    parser = build_parser()
+    args = parser.parse_args(["capture", "scene", "--target", "BP_Hero"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"captures": []}) as mock_run:
+        cmd_capture_scene(args)
+
+    mock_run.assert_called_once_with("capture-scene", {"target": "BP_Hero"})
+
+
+def test_cmd_capture_scene_forwards_explicit_camera_and_native_lists():
+    parser = build_parser()
+    args = parser.parse_args(["capture", "scene", "--target", "BP_Hero"])
+    # mcp-serve passes JSON arrays straight through to the namespace.
+    args.location = [200, 0, 100]
+    args.rotation = [-10, 180, 0]
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"captures": []}) as mock_run:
+        cmd_capture_scene(args)
+
+    mock_run.assert_called_once_with(
+        "capture-scene",
+        {"target": "BP_Hero", "location": [200.0, 0.0, 100.0], "rotation": [-10.0, 180.0, 0.0]},
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--pie-instance", "1"], "requires --world pie"),
+        (["--world", "editor", "--pie-instance", "1"], "requires --world pie"),
+        (["--location", "0,0,0"], "must be given together"),
+        (["--rotation", "0,0,0"], "must be given together"),
+        (["--location", "0,0,0", "--rotation", "0,0,0", "--angles", "front"], "cannot be combined"),
+        (["--output", "base64", "--output-dir", "out"], "requires file output"),
+    ],
+)
+def test_cmd_capture_scene_rejects_conflicting_options(argv, message):
+    parser = build_parser()
+    args = parser.parse_args(["capture", "scene", "--target", "BP_Hero", *argv])
+
+    with patch("soft_ue_cli.__main__._run_tool") as mock_run, pytest.raises(SystemExit, match=message):
+        cmd_capture_scene(args)
+    mock_run.assert_not_called()
+
+
+def test_cmd_capture_scene_copies_each_angle_into_output_dir(tmp_path, capsys):
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    front = bridge_dir / "scene_front_aaaa.png"
+    top = bridge_dir / "scene_top_bbbb.png"
+    front.write_bytes(b"front-bytes")
+    top.write_bytes(b"top-bytes")
+    output_dir = tmp_path / "poses"
+    parser = build_parser()
+    args = parser.parse_args(["capture", "scene", "--target", "BP_Hero", "--output-dir", str(output_dir)])
+
+    bridge_result = {
+        "target": "BP_Hero",
+        "captures": [
+            {"angle": "front", "mode": "file", "file_path": str(front)},
+            {"angle": "top", "mode": "file", "file_path": str(top)},
+        ],
+    }
+    with patch("soft_ue_cli.__main__._run_tool", return_value=bridge_result):
+        cmd_capture_scene(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["output_dir"] == str(output_dir)
+    assert (output_dir / front.name).read_bytes() == b"front-bytes"
+    assert (output_dir / top.name).read_bytes() == b"top-bytes"
+    assert [c["file_path"] for c in payload["captures"]] == [str(output_dir / front.name), str(output_dir / top.name)]
+    assert [c["bridge_file_path"] for c in payload["captures"]] == [str(front), str(top)]
+    assert [c["angle"] for c in payload["captures"]] == ["front", "top"]
+
+
+def test_parser_capture_scene_requires_target():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["capture", "scene"])
 
 
 def test_parser_capture_screenshot_invalid_mode():

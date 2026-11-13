@@ -99,6 +99,15 @@ protected:
 	static AActor* FindActorByNameOrLabel(UWorld* World, const FString& NameOrLabel);
 
 	/**
+	 * Every actor whose name or label equals NameOrLabel, ignoring case. Outliner labels need not be
+	 * unique, so tools that must act on exactly one actor use this to detect an ambiguous name.
+	 */
+	static TArray<AActor*> FindActorsByNameOrLabel(UWorld* World, const FString& NameOrLabel);
+
+	/** True when the actor's name or label equals NameOrLabel, ignoring case. */
+	static bool ActorMatchesNameOrLabel(const AActor* Actor, const FString& NameOrLabel);
+
+	/**
 	 * First actor whose name or label matches Pattern under the MatchesWildcard rules. An empty Pattern
 	 * matches nothing, so a missing actor name cannot resolve to an arbitrary actor.
 	 */

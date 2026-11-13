@@ -454,3 +454,73 @@ def test_capture_tools_share_one_image_output_pipeline():
     # Unity builds share anonymous namespaces, so shared helpers carry a file-specific prefix.
     assert "ImageOutputResize(" in shared
     assert "bool ResizeImage(" not in shared
+
+
+def test_image_output_names_files_from_the_whole_image_and_exposes_cleanup():
+    header = _read("SoftUEBridge/Public/Utils/BridgeImageOutput.h")
+    shared = _read("SoftUEBridge/Private/Utils/BridgeImageOutput.cpp")
+
+    # A hash of only the first bytes lets two same-size images share a file name, and a later
+    # capture silently overwrites an earlier one from the same multi-angle call.
+    assert "FMath::Min(1024" not in shared
+    assert "FMD5::HashBytes(ImageData.GetData(), ImageData.Num())" in shared
+
+    # Multi-image tools clean once before their first image instead of once per image.
+    assert "SOFTUEBRIDGE_API void DeletePreviousCaptures(const FString& FilePrefix);" in header
+    assert "void SoftUE::ImageOutput::DeletePreviousCaptures(const FString& FilePrefix)" in shared
+    assert "DeletePreviousCaptures(FilePrefix);" in shared
+
+
+def test_capture_scene_tool_reuses_shared_lookup_and_image_output():
+    header = _read("SoftUEBridgeEditor/Public/Tools/Editor/CaptureSceneTool.h")
+    tool = _read("SoftUEBridgeEditor/Private/Tools/Editor/CaptureSceneTool.cpp")
+    module = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+
+    assert 'GetToolName() const override { return TEXT("capture-scene"); }' in header
+    assert '#include "Tools/Editor/CaptureSceneTool.h"' in module
+    assert "Registry.RegisterToolClass<UCaptureSceneTool>();" in module
+
+    # Exact lookup only: a wildcard could silently frame the wrong actor.
+    assert "FindActorsByNameOrLabel(" in tool
+    assert "FindActorByPattern" not in tool
+
+    # Shared image output, cleaned once per call, with a per-angle file prefix.
+    assert "SoftUE::ImageOutput::EncodeCapture(" in tool
+    assert "SoftUE::ImageOutput::DeletePreviousCaptures(CaptureSceneFilePrefix)" in tool
+    assert "Options.bCleanupPrevious = false;" in tool
+    assert 'CaptureSceneFilePrefix = TEXT("scene_")' in tool
+
+    # The temporary camera has no owning actor, lives in the transient package, and is always torn down.
+    assert "NewObject<USceneCaptureComponent2D>(GetTransientPackage()" in tool
+    assert "RegisterComponentWithWorld(World)" in tool
+    assert "ON_SCOPE_EXIT" in tool
+    assert "Capture->DestroyComponent();" in tool
+    assert "SpawnActor" not in tool
+    assert "FScopedTransaction" not in tool
+
+
+
+def test_capture_scene_cuts_between_angles_rejects_ambiguous_labels_and_isolates_attachments():
+    tool = _read("SoftUEBridgeEditor/Private/Tools/Editor/CaptureSceneTool.cpp")
+    base_header = _read("SoftUEBridge/Public/Tools/BridgeToolBase.h")
+    base_source = _read("SoftUEBridge/Private/Tools/BridgeToolBase.cpp")
+
+    # Every angle is a camera cut with its own warm-up frames, so it never renders on the
+    # previous angle's occlusion results or temporal history.
+    loop = tool.split("for (int32 CameraIndex = 0;", 1)[1].split("ReadPixels", 1)[0]
+    assert "Capture->bCameraCutThisFrame = true;" in loop
+    assert loop.index("bCameraCutThisFrame") < loop.index("CaptureScene()")
+    assert "CaptureSceneWarmupFrames + 1" in loop
+    assert "CameraIndex == 0" not in loop
+
+    # A label shared by several actors is an error, for the whole target and for Actor.Component.
+    assert "static TArray<AActor*> FindActorsByNameOrLabel(" in base_header
+    assert "UBridgeToolBase::FindActorsByNameOrLabel(" in base_source
+    assert tool.count("FindActorsByNameOrLabel(World,") == 2
+    assert tool.count("CaptureSceneAmbiguousError(") == 3
+    assert "FindActorByNameOrLabel(" not in tool
+
+    # Isolation shows the target and everything attached to it, recursively.
+    assert "Actor->GetAttachedActors(IsolatedActors, false, true);" in tool
+    assert "Capture->ShowOnlyActors.Add(Shown);" in tool
+    assert 'SetArrayField(TEXT("isolated_actors")' in tool

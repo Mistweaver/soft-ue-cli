@@ -218,6 +218,18 @@ def test_catalog_marks_asset_query_physics_as_bridge_editor_command():
     assert "query-physics" in meta["examples"][0]
 
 
+
+def test_catalog_marks_capture_scene_as_bridge_editor_command():
+    meta = get_command_metadata("capture scene")
+
+    assert meta["status"] == "canonical"
+    assert meta["layer"] == "bridge"
+    assert meta["category"] == "capture"
+    assert meta["requires_bridge"] is True
+    assert meta["requires_editor"] is True
+    assert meta["requires_pie"] is False
+    assert "capture scene" in meta["examples"][0]
+
 def test_catalog_marks_anim_state_machine_inspect_as_bridge_editor_command():
     meta = get_command_metadata("anim state-machine inspect")
 

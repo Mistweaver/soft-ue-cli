@@ -404,3 +404,11 @@ def test_every_skill_file_is_force_included_in_the_wheel():
         f"skill files absent from [tool.hatch.build.targets.wheel.force-include]: {missing}. "
         "Add one line per file or they will not ship in the wheel."
     )
+
+
+def test_test_tools_exercises_capture_scene():
+    content = get_skill("test-tools")
+
+    assert content is not None
+    assert 'run_test("capture-scene front/top", "capture-scene"' in content
+    assert '"angles": ["front", "top"]' in content
