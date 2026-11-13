@@ -38,6 +38,7 @@ COMMAND_ALIAS_PREFIXES: dict[tuple[str, ...], str] = {
     ("anim", "retarget", "sequence"): "anim-retarget-sequence",
     ("anim", "retarget", "blueprint"): "anim-retarget-blueprint",
     ("anim", "montage", "inspect"): "anim-montage-inspect",
+    ("anim", "pose-at"): "anim-pose-at",
     ("anim", "montage", "set-slot-animation"): "anim-montage-set-slot-animation",
     ("anim", "pose-search", "inspect"): "pose-search-schema-inspect",
     ("anim", "pose-search", "remap"): "pose-search-schema-remap",

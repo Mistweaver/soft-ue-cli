@@ -99,7 +99,10 @@ def _first_subparsers_action(parser: argparse.ArgumentParser) -> argparse._SubPa
     return None
 
 
-def _add_copied_action(target: argparse.ArgumentParser, action: argparse.Action) -> None:
+def _add_copied_action(
+    target: argparse.ArgumentParser | argparse._MutuallyExclusiveGroup,
+    action: argparse.Action,
+) -> None:
     if isinstance(action, argparse._HelpAction | argparse._SubParsersAction):
         return
 
@@ -130,8 +133,16 @@ def _add_copied_action(target: argparse.ArgumentParser, action: argparse.Action)
 
 
 def _copy_parser_surface(source: argparse.ArgumentParser, target: argparse.ArgumentParser) -> None:
+    # Rebuild either/or groups so canonical commands enforce them like the flat command does.
+    copied_groups: dict[int, argparse._MutuallyExclusiveGroup] = {}
+    group_for_action: dict[int, argparse._MutuallyExclusiveGroup] = {}
+    for group in source._mutually_exclusive_groups:
+        copied_groups[id(group)] = target.add_mutually_exclusive_group(required=group.required)
+        for grouped_action in group._group_actions:
+            group_for_action[id(grouped_action)] = copied_groups[id(group)]
+
     for action in source._actions:
-        _add_copied_action(target, action)
+        _add_copied_action(group_for_action.get(id(action), target), action)
     target.set_defaults(**source._defaults)
 
 
@@ -3012,6 +3023,17 @@ def cmd_anim_montage_inspect(args: argparse.Namespace) -> None:
     if args.include:
         arguments["include"] = args.include
     _print_json(_run_tool("anim-montage-inspect", arguments))
+
+
+def cmd_anim_pose_at(args: argparse.Namespace) -> None:
+    arguments: dict = {
+        "asset_path": _fix_msys_asset_path(args.asset_path),
+    }
+    if args.frame is not None:
+        arguments["frame"] = args.frame
+    if args.time is not None:
+        arguments["time"] = args.time
+    _print_json(_run_tool("anim-pose-at", arguments))
 
 
 def cmd_anim_state_machine_inspect(args: argparse.Namespace) -> None:
@@ -7870,6 +7892,29 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         help="Comma-separated sections to include: notifies,sections,slots (default: all)",
     )
     p_ami.set_defaults(func=cmd_anim_montage_inspect)
+
+    p_apa = sub.add_parser(
+        "anim-pose-at",
+        help="Sample an animation at a frame or time and report bone transforms, without PIE.",
+        description=(
+            "Sample an AnimSequence at a frame or time and report each bone's location, rotation "
+            "([pitch, yaw, roll]), quat ([x, y, z, w]), and scale in component space, with the clip's frame "
+            "count, play length, and frame rate. Give exactly one of --frame or --time. A frame must be 0 to "
+            "frame_count - 1 and a time 0 to play_length; a time between keys is interpolated. The pose comes "
+            "from the animation's preview mesh, then the skeleton's preview mesh, then the skeleton itself: "
+            "the same pose the Animation Editor shows. No AnimBlueprint, post-process graph, or physics is "
+            "applied. Root motion stays in the root bone. Keys are read raw (uncompressed).\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0\n"
+            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --time 0.5"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_apa.add_argument("asset_path", help="AnimSequence asset path to sample")
+    sample_at = p_apa.add_mutually_exclusive_group(required=True)
+    sample_at.add_argument("--frame", type=int, metavar="N", help="Frame to sample, from 0 to frame_count - 1")
+    sample_at.add_argument("--time", type=float, metavar="SECONDS", help="Time in seconds to sample, from 0 to play_length")
+    p_apa.set_defaults(func=cmd_anim_pose_at)
 
     p_asmi = sub.add_parser(
         "anim-state-machine-inspect",

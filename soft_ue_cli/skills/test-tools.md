@@ -117,6 +117,7 @@ class MCPClient:
         "anim-montage-inspect": "anim montage inspect",
         "anim-state-machine-inspect": "anim state-machine inspect",
         "anim-montage-set-slot-animation": "anim montage set-slot-animation",
+        "anim-pose-at": "anim pose-at",
         "pose-search-schema-inspect": "anim pose-search inspect",
         "pose-search-schema-remap": "anim pose-search remap",
         "pose-search-database-repoint": "anim pose-search database-repoint",
@@ -294,6 +295,18 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             result = None
             passed = False
             error = str(exc)[:300]
+        return _record(name, tool, args, passed, int((time.time() - t0) * 1000), error)
+
+    def run_test_error(name, tool, args, expected_text, timeout=None) -> dict:
+        """Passes when the tool fails with an error message containing expected_text."""
+        t0 = time.time()
+        try:
+            result = caller(tool, args, timeout)
+            passed = False
+            error = f"expected an error containing {expected_text!r}, got: {json.dumps(result)[:200]}"
+        except Exception as exc:
+            passed = expected_text in str(exc)
+            error = None if passed else f"wrong error: {str(exc)[:250]}"
         return _record(name, tool, args, passed, int((time.time() - t0) * 1000), error)
 
     def run_cli(name, *args, check_stdout=None, timeout=30) -> dict:
@@ -1422,6 +1435,8 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "anim pose-search database-repoint" in s and "--anim-map" in s and "--schema" in s)
     run_cli("asset repoint-references help", "asset", "repoint-references", "--help",
             check_stdout=lambda s: "asset repoint-references" in s and "--map" in s)
+    run_cli("anim pose-at help", "anim", "pose-at", "--help",
+            check_stdout=lambda s: "anim pose-at" in s and "--frame" in s and "--time" in s)
     run_cli("asset query-physics help", "asset", "query-physics", "--help",
             check_stdout=lambda s: "asset query-physics" in s and "--bones" in s and "--space" in s)
     run_cli("asset skeletal-socket create help", "asset", "skeletal-socket", "create", "--help",
@@ -1788,6 +1803,33 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     else:
         _record("asset-repoint-references smoke", "asset-repoint-references", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ASSET_REPOINT_ASSETS and SOFT_UE_TEST_ASSET_REPOINT_MAP")
+
+    _pose_anim = os.environ.get("SOFT_UE_TEST_ANIM_SEQUENCE", "").strip()
+    if _pose_anim:
+        def _pose_matches(r):
+            bones = r.get("bones") or []
+            return (
+                r.get("success") is True
+                and r.get("asset_type") == "AnimSequence"
+                and r.get("frame") == 0
+                and r.get("frame_count", 0) > 0
+                and r.get("play_length", -1) >= 0
+                and r.get("frame_rate", 0) > 0
+                and r.get("evaluation") == "raw"
+                and len(bones) == r.get("bone_count")
+                and all(len(b.get("location", [])) == 3 and len(b.get("quat", [])) == 4 for b in bones)
+            )
+
+        run_test("anim-pose-at frame 0", "anim-pose-at", {"asset_path": _pose_anim, "frame": 0}, _pose_matches)
+        run_test("anim-pose-at time 0", "anim-pose-at", {"asset_path": _pose_anim, "time": 0.0},
+                 lambda r: r.get("success") is True and r.get("frame") is None)
+        run_test_error("anim-pose-at frame out of range", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 1000000}, "is outside 0 to")
+        run_test_error("anim-pose-at frame and time together", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 0, "time": 0.0}, "exactly one of frame or time")
+    else:
+        _record("anim-pose-at smoke", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_ANIM_SEQUENCE")
 
     _physics_asset = os.environ.get("SOFT_UE_TEST_PHYSICS_ASSET", "").strip()
     _physics_bone = os.environ.get("SOFT_UE_TEST_PHYSICS_BONE", "").strip()

@@ -363,6 +363,36 @@ def test_bridge_bone_pose_helpers_are_engine_free_and_covered_by_a_spec():
     assert "SoftUEBridge.Animation.BonePose" in spec
 
 
+def test_anim_sample_time_rules_are_pure_and_covered_by_a_spec():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeAnimSampleTime.h")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeAnimSampleTimeSpec.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "namespace SoftUE::AnimSampleTime" in header
+    assert "Resolve" in header and "Resolve(" in spec
+    assert "SoftUEBridge.Animation.SampleTime" in spec
+    assert "SoftUE::AnimSampleTime::Resolve" in tool_source
+
+
+def test_anim_pose_at_is_registered_and_uses_shared_helpers():
+    module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert '#include "Tools/Animation/AnimPoseAtTool.h"' in module_source
+    assert "RegisterToolClass<UAnimPoseAtTool>()" in module_source
+
+    assert '#include "Utils/BridgeBonePose.h"' in tool_source
+    assert "SoftUE::BonePose::SetTransformFields" in tool_source
+    assert "SoftUE::BonePose::ComponentSpaceFromLocal" in tool_source
+
+    # Root motion stays in the root bone instead of being extracted.
+    assert "bExtractRootMotion" in tool_source or "FAnimExtractContext(" in tool_source
+
+    # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
+    assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
+    assert "PoseAtSchemaProperty" in tool_source
+
+
 def test_asset_query_physics_constraint_frames_follow_space_and_mesh_is_body_space_noop():
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
 

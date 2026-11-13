@@ -3581,6 +3581,18 @@ def test_removed_flat_commands_are_no_longer_supported(argv):
         build_parser().parse_args(argv)
 
 
+def test_canonical_commands_keep_required_mutually_exclusive_groups():
+    # Canonical commands copy the flat parser; a required either/or group must survive the copy.
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["mutable", "graph", "create-from-spec", "/Game/CO_Hero"])
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([
+            "mutable", "graph", "create-from-spec", "/Game/CO_Hero", "--spec", "{}", "--spec-file", "s.json",
+        ])
+    args = build_parser().parse_args(["mutable", "graph", "create-from-spec", "/Game/CO_Hero", "--spec", "{}"])
+    assert args.spec == "{}"
+
+
 def test_canonical_command_family_normalization_preserves_root_options():
     args = build_parser().parse_args([
         "--server",
@@ -4510,6 +4522,51 @@ def test_anim_montage_inspect_routes_to_bridge_tool():
             "include": "notifies,sections,slots",
         },
     )
+
+
+def test_anim_pose_at_routes_time_to_bridge_tool():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--time", "0.5"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with("anim-pose-at", {"asset_path": "/Game/Anim/AS_Idle", "time": 0.5})
+
+
+def test_anim_pose_at_routes_frame_as_integer():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "12"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    sent = mock_run.call_args.args[1]
+    assert sent == {"asset_path": "/Game/Anim/AS_Idle", "frame": 12}
+    assert isinstance(sent["frame"], int)
+
+
+def test_anim_pose_at_prints_bridge_response(capsys):
+    response = {
+        "success": True,
+        "asset_type": "AnimSequence",
+        "frame_count": 31,
+        "bones": [{"name": "pelvis", "location": [0.0, 0.0, 90.0], "quat": [0.0, 0.0, 0.0, 1.0]}],
+    }
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value=response):
+        args.func(args)
+
+    assert json.loads(capsys.readouterr().out) == response
+
+
+def test_anim_pose_at_requires_frame_or_time():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle"])
+
+
+def test_anim_pose_at_rejects_frame_and_time_together():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "3", "--time", "0.5"])
 
 
 def test_anim_state_machine_inspect_routes_to_bridge_tool():

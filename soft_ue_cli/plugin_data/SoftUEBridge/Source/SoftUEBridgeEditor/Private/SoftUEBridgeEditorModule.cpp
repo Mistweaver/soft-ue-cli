@@ -95,6 +95,7 @@
 #include "Tools/Animation/AnimBlueprintRetargetTool.h"
 #include "Tools/Animation/AnimMontageInspectTool.h"
 #include "Tools/Animation/AnimMontageSlotTool.h"
+#include "Tools/Animation/AnimPoseAtTool.h"
 #include "Tools/Animation/AnimRepointReferencesTool.h"
 #include "Tools/Animation/AnimSequenceRetargetTool.h"
 #include "Tools/Animation/AnimStateMachineInspectTool.h"
@@ -190,6 +191,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("anim-montage-inspect")))
 	{
 		Registry.RegisterToolClass<UAnimMontageInspectTool>();
+	}
+	if (!Registry.HasTool(TEXT("anim-pose-at")))
+	{
+		Registry.RegisterToolClass<UAnimPoseAtTool>();
 	}
 	if (!Registry.HasTool(TEXT("anim-montage-set-slot-animation")))
 	{
