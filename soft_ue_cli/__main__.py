@@ -3033,6 +3033,12 @@ def cmd_anim_pose_at(args: argparse.Namespace) -> None:
         arguments["frame"] = args.frame
     if args.time is not None:
         arguments["time"] = args.time
+    if args.bones:
+        arguments["bones"] = _normalize_name_list(args.bones)
+    if args.space:
+        arguments["space"] = args.space
+    if args.mesh_path:
+        arguments["mesh_path"] = _fix_msys_asset_path(args.mesh_path)
     _print_json(_run_tool("anim-pose-at", arguments))
 
 
@@ -3164,16 +3170,18 @@ def cmd_asset_repoint_references(args: argparse.Namespace) -> None:
     _print_json(_run_tool("asset-repoint-references", arguments))
 
 
+def _normalize_name_list(value: str | list) -> list[str]:
+    """Names from a comma-separated CLI string or a native MCP list, trimmed, without blanks."""
+    parts = value if isinstance(value, list) else str(value).split(",")
+    return [name for name in (str(part).strip() for part in parts) if name]
+
+
 def cmd_asset_query_physics(args: argparse.Namespace) -> None:
     arguments: dict = {
         "asset_path": _fix_msys_asset_path(args.asset_path),
     }
     if args.bones:
-        if isinstance(args.bones, list):
-            bones = [str(bone).strip() for bone in args.bones]
-        else:
-            bones = [part.strip() for part in str(args.bones).split(",")]
-        arguments["bones"] = [bone for bone in bones if bone]
+        arguments["bones"] = _normalize_name_list(args.bones)
     if args.space:
         arguments["space"] = args.space
     if args.mesh_path:
@@ -7898,15 +7906,19 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         help="Sample an animation at a frame or time and report bone transforms, without PIE.",
         description=(
             "Sample an AnimSequence at a frame or time and report each bone's location, rotation "
-            "([pitch, yaw, roll]), quat ([x, y, z, w]), and scale in component space, with the clip's frame "
+            "([pitch, yaw, roll]), quat ([x, y, z, w]), and scale in component space (or each bone's parent "
+            "space with --space local), with the clip's frame "
             "count, play length, and frame rate. Give exactly one of --frame or --time. A frame must be 0 to "
             "frame_count - 1 and a time 0 to play_length; a time between keys is interpolated. The pose comes "
             "from the animation's preview mesh, then the skeleton's preview mesh, then the skeleton itself: "
             "the same pose the Animation Editor shows. No AnimBlueprint, post-process graph, or physics is "
-            "applied. Root motion stays in the root bone. Keys are read raw (uncompressed).\n\n"
+            "applied. --mesh samples onto another mesh that uses a compatible skeleton; its reference pose fills "
+            "bones the animation does not key. --bones limits the report and lists unknown names in "
+            "missing_bones. Root motion stays in the root bone. Keys are read raw (uncompressed).\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0\n"
-            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --time 0.5"
+            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --time 0.5\n"
+            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0 --bones pelvis,hand_l --mesh /Game/Characters/SKM_Hero"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -7914,6 +7926,18 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     sample_at = p_apa.add_mutually_exclusive_group(required=True)
     sample_at.add_argument("--frame", type=int, metavar="N", help="Frame to sample, from 0 to frame_count - 1")
     sample_at.add_argument("--time", type=float, metavar="SECONDS", help="Time in seconds to sample, from 0 to play_length")
+    p_apa.add_argument("--bones", metavar="A,B,C", help="Comma-separated bone names to report (default: every bone)")
+    p_apa.add_argument(
+        "--space",
+        choices=["component", "local"],
+        help="component (default): relative to the mesh component; local: relative to each bone's parent",
+    )
+    p_apa.add_argument(
+        "--mesh",
+        dest="mesh_path",
+        help="SkeletalMesh to sample onto (default: the animation's preview mesh, then the skeleton's). "
+        "Must use the animation's skeleton or one marked compatible with it.",
+    )
     p_apa.set_defaults(func=cmd_anim_pose_at)
 
     p_asmi = sub.add_parser(

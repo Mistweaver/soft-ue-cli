@@ -1823,6 +1823,20 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
         run_test("anim-pose-at frame 0", "anim-pose-at", {"asset_path": _pose_anim, "frame": 0}, _pose_matches)
         run_test("anim-pose-at time 0", "anim-pose-at", {"asset_path": _pose_anim, "time": 0.0},
                  lambda r: r.get("success") is True and r.get("frame") is None)
+        # bones is a native array: the MCP schema must not stringify it.
+        _pose_missing = f"{LABEL_PFX}_no_such_bone"
+        # A filter naming only an unknown bone works on any skeleton: no bones, one missing name.
+        run_test("anim-pose-at bones filter", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "bones": [_pose_missing]},
+                 lambda r: r.get("success") is True
+                 and r.get("bones") == []
+                 and r.get("missing_bones") == [_pose_missing])
+        run_test("anim-pose-at local space", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "space": "local"},
+                 lambda r: r.get("success") is True and r.get("space") == "local"
+                 and all("parent" in b for b in r.get("bones", [])))
+        run_test_error("anim-pose-at unknown space", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 0, "space": "world"}, "space must be")
         run_test_error("anim-pose-at frame out of range", "anim-pose-at",
                        {"asset_path": _pose_anim, "frame": 1000000}, "is outside 0 to")
         run_test_error("anim-pose-at frame and time together", "anim-pose-at",
@@ -1830,6 +1844,17 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     else:
         _record("anim-pose-at smoke", "anim-pose-at", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ANIM_SEQUENCE")
+
+    _additive_anim = os.environ.get("SOFT_UE_TEST_ADDITIVE_ANIM", "").strip()
+    if _additive_anim:
+        run_test("anim-pose-at additive", "anim-pose-at", {"asset_path": _additive_anim, "frame": 0},
+                 lambda r: r.get("success") is True
+                 and isinstance(r.get("additive"), dict)
+                 and r["additive"].get("base_type")
+                 and any("additive" in w for w in r.get("warnings", [])))
+    else:
+        _record("anim-pose-at additive", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_ADDITIVE_ANIM")
 
     _physics_asset = os.environ.get("SOFT_UE_TEST_PHYSICS_ASSET", "").strip()
     _physics_bone = os.environ.get("SOFT_UE_TEST_PHYSICS_BONE", "").strip()

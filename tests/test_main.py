@@ -4544,6 +4544,45 @@ def test_anim_pose_at_routes_frame_as_integer():
     assert isinstance(sent["frame"], int)
 
 
+def test_anim_pose_at_routes_bones_space_and_mesh():
+    args = build_parser().parse_args([
+        "anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0",
+        "--bones", "pelvis, hand_l,,",
+        "--space", "local",
+        "--mesh", "/Game/Characters/SKM_Hero",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with(
+        "anim-pose-at",
+        {
+            "asset_path": "/Game/Anim/AS_Idle",
+            "frame": 0,
+            "bones": ["pelvis", "hand_l"],
+            "space": "local",
+            "mesh_path": "/Game/Characters/SKM_Hero",
+        },
+    )
+
+
+def test_anim_pose_at_accepts_native_bone_list():
+    # MCP passes bones as a JSON array, which arrives as a list instead of a comma string.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+    args.bones = ["pelvis", " hand_l ", ""]
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    assert mock_run.call_args.args[1]["bones"] == ["pelvis", "hand_l"]
+
+
+def test_anim_pose_at_rejects_unknown_space():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--space", "world"])
+
+
 def test_anim_pose_at_prints_bridge_response(capsys):
     response = {
         "success": True,

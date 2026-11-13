@@ -374,6 +374,36 @@ def test_anim_sample_time_rules_are_pure_and_covered_by_a_spec():
     assert "SoftUE::AnimSampleTime::Resolve" in tool_source
 
 
+def test_anim_pose_at_filters_bones_supports_local_space_and_checks_mesh_skeleton():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "SoftUE::BonePose::ParseBoneFilter(Arguments)" in tool_source
+    assert "missing_bones" in tool_source
+    # local reports the sampled parent-relative transforms; component composes them.
+    assert 'TEXT("local")' in tool_source and 'TEXT("component")' in tool_source
+    # A mesh on an unrelated skeleton would sample garbage, so it is rejected the way the editor's
+    # preview-mesh picker does.
+    assert "IsCompatibleForEditor(" in tool_source
+    assert 'TEXT("mesh_path")' in tool_source
+
+
+def test_anim_pose_at_applies_additive_offsets_onto_their_base_pose():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # An additive clip samples offsets, not a pose. They are accumulated onto the clip's base pose
+    # the way UAnimPoseExtensions does with bRetrieveAdditiveAsFullPose.
+    assert "IsValidAdditive()" in tool_source
+    assert "ResetToAdditiveIdentity()" in tool_source
+    assert "GetAdditiveBasePose(" in tool_source
+    assert "FAnimationRuntime::AccumulateAdditivePose(" in tool_source
+    assert "NormalizeRotations()" in tool_source
+
+    # The response says the pose is a base plus offsets and names the base.
+    assert 'TEXT("additive")' in tool_source
+    assert 'TEXT("base_type")' in tool_source
+    assert 'TEXT("warnings")' in tool_source
+
+
 def test_anim_pose_at_is_registered_and_uses_shared_helpers():
     module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
