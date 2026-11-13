@@ -4578,6 +4578,46 @@ def test_anim_pose_at_accepts_native_bone_list():
     assert mock_run.call_args.args[1]["bones"] == ["pelvis", "hand_l"]
 
 
+def test_anim_pose_at_sends_compressed_only_when_asked():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--compressed"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["compressed"] is True
+
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert "compressed" not in mock_run.call_args.args[1]
+
+
+def test_anim_pose_at_routes_montage_slot():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AM_Attack", "--time", "0.2", "--slot", "UpperBody"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1] == {"asset_path": "/Game/Anim/AM_Attack", "time": 0.2, "slot": "UpperBody"}
+
+
+def test_anim_pose_at_parses_blend_input_as_numbers():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0", "--blend", "0.5, 90"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["blend"] == [0.5, 90.0]
+
+
+def test_anim_pose_at_accepts_native_blend_list():
+    # MCP passes blend as a JSON array of numbers.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0"])
+    args.blend = [120, 0.25]
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["blend"] == [120.0, 0.25]
+
+
+def test_anim_pose_at_rejects_non_numeric_blend():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0", "--blend", "fast,90"])
+
+
 def test_anim_pose_at_rejects_unknown_space():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--space", "world"])

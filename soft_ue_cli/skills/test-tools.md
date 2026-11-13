@@ -1835,6 +1835,9 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
                  {"asset_path": _pose_anim, "frame": 0, "space": "local"},
                  lambda r: r.get("success") is True and r.get("space") == "local"
                  and all("parent" in b for b in r.get("bones", [])))
+        run_test("anim-pose-at compressed", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "compressed": True},
+                 lambda r: r.get("success") is True and r.get("evaluation") == "compressed")
         run_test_error("anim-pose-at unknown space", "anim-pose-at",
                        {"asset_path": _pose_anim, "frame": 0, "space": "world"}, "space must be")
         run_test_error("anim-pose-at frame out of range", "anim-pose-at",
@@ -1844,6 +1847,33 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     else:
         _record("anim-pose-at smoke", "anim-pose-at", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ANIM_SEQUENCE")
+
+    _pose_montage = os.environ.get("SOFT_UE_TEST_MONTAGE", "").strip()
+    if _pose_montage:
+        run_test("anim-pose-at montage", "anim-pose-at", {"asset_path": _pose_montage, "time": 0.0},
+                 lambda r: r.get("success") is True and r.get("asset_type") == "AnimMontage"
+                 and r.get("slot") and r.get("segment_anim_path") and len(r.get("bones", [])) > 0)
+        run_test_error("anim-pose-at montage unknown slot", "anim-pose-at",
+                       {"asset_path": _pose_montage, "time": 0.0, "slot": f"{LABEL_PFX}_no_slot"}, "Slots:")
+    else:
+        _record("anim-pose-at montage", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_MONTAGE")
+
+    _pose_blendspace = os.environ.get("SOFT_UE_TEST_BLENDSPACE_1D", "").strip()
+    if _pose_blendspace:
+        # blend is a native number array: the MCP schema must not stringify it.
+        run_test("anim-pose-at blendspace", "anim-pose-at",
+                 {"asset_path": _pose_blendspace, "time": 0.0, "blend": [0.0]},
+                 lambda r: r.get("success") is True and r.get("frame_count") is None
+                 and r.get("blend_input") == [0.0] and len(r.get("samples", [])) > 0
+                 and abs(sum(s.get("weight", 0) for s in r["samples"]) - 1.0) < 0.01)
+        run_test_error("anim-pose-at blendspace frame", "anim-pose-at",
+                       {"asset_path": _pose_blendspace, "frame": 0, "blend": [0.0]}, "no fixed frames")
+        run_test_error("anim-pose-at blendspace without blend", "anim-pose-at",
+                       {"asset_path": _pose_blendspace, "time": 0.0}, "needs blend")
+    else:
+        _record("anim-pose-at blendspace", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_BLENDSPACE_1D")
 
     _additive_anim = os.environ.get("SOFT_UE_TEST_ADDITIVE_ANIM", "").strip()
     if _additive_anim:

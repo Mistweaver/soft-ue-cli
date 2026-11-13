@@ -716,6 +716,10 @@ def test_anim_pose_at_schema_uses_native_json_types():
         assert params["properties"]["bones"]["type"] == "array", name
         assert params["properties"]["space"]["enum"] == ["component", "local"], name
         assert params["properties"]["mesh_path"]["type"] == "string", name
+        assert params["properties"]["compressed"]["type"] == "boolean", name
+        assert params["properties"]["slot"]["type"] == "string", name
+        assert params["properties"]["blend"]["type"] == "array", name
+        assert params["properties"]["blend"]["items"]["type"] == "number", name
         # frame and time are either/or; JSON Schema here cannot say that, so neither is required.
         assert params.get("required", []) == ["asset_path"]
 

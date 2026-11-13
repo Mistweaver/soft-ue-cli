@@ -404,6 +404,40 @@ def test_anim_pose_at_applies_additive_offsets_onto_their_base_pose():
     assert 'TEXT("warnings")' in tool_source
 
 
+def test_anim_pose_at_reads_raw_keys_unless_compressed_is_requested():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # Raw keys by default (what an authoring script just wrote); compressed is what the game plays.
+    assert "SetUseRAWData(bUseRawData)" in tool_source
+    assert 'TEXT("compressed")' in tool_source
+    assert 'bCompressed ? TEXT("compressed") : TEXT("raw")' in tool_source
+
+
+def test_anim_pose_at_resolves_montages_through_their_slot_segments():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # Montage time maps to a segment's animation and its local time, including play rate and looping.
+    assert "AnimTrack.GetSegmentAtTime(" in tool_source
+    assert "GetAnimationData(" in tool_source
+    assert 'TEXT("slot")' in tool_source and 'TEXT("segment_anim_path")' in tool_source
+    # An unknown slot lists the montage's slots.
+    assert "Slots: %s." in tool_source
+
+
+def test_anim_pose_at_blends_blendspace_samples_by_normalized_time():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "GetSamplesFromBlendInput(" in tool_source
+    assert "GetAnimationLengthFromSampleData(" in tool_source
+    # The context overload exists in 5.7 and 5.8; the overload without a context was removed in 5.8.
+    assert "GetAnimationPose(Samples, ExtractContext, PoseData)" in tool_source
+    assert "IsA<UBlendSpace1D>()" in tool_source
+    # BlendSpaces have no fixed frames, and aim offsets are rejected rather than sampled wrongly.
+    assert "Timeline.bHasFrames = false" in tool_source
+    assert "IsValidAdditive()" in tool_source and "aim offset" in tool_source
+    assert "sync markers are not used" in tool_source
+
+
 def test_anim_pose_at_is_registered_and_uses_shared_helpers():
     module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")

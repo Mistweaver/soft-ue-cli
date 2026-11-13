@@ -3039,6 +3039,13 @@ def cmd_anim_pose_at(args: argparse.Namespace) -> None:
         arguments["space"] = args.space
     if args.mesh_path:
         arguments["mesh_path"] = _fix_msys_asset_path(args.mesh_path)
+    if args.compressed:
+        arguments["compressed"] = True
+    if args.slot:
+        arguments["slot"] = args.slot
+    if args.blend is not None:
+        # The CLI parses a comma string; MCP passes a native list of numbers.
+        arguments["blend"] = [float(value) for value in args.blend]
     _print_json(_run_tool("anim-pose-at", arguments))
 
 
@@ -3174,6 +3181,14 @@ def _normalize_name_list(value: str | list) -> list[str]:
     """Names from a comma-separated CLI string or a native MCP list, trimmed, without blanks."""
     parts = value if isinstance(value, list) else str(value).split(",")
     return [name for name in (str(part).strip() for part in parts) if name]
+
+
+def _parse_number_list(value: str) -> list[float]:
+    """argparse type for a comma-separated list of numbers, such as a BlendSpace input."""
+    try:
+        return [float(part) for part in (piece.strip() for piece in value.split(",")) if part]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected comma-separated numbers, got {value!r}") from None
 
 
 def cmd_asset_query_physics(args: argparse.Namespace) -> None:
@@ -7905,24 +7920,33 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         "anim-pose-at",
         help="Sample an animation at a frame or time and report bone transforms, without PIE.",
         description=(
-            "Sample an AnimSequence at a frame or time and report each bone's location, rotation "
-            "([pitch, yaw, roll]), quat ([x, y, z, w]), and scale in component space (or each bone's parent "
-            "space with --space local), with the clip's frame "
-            "count, play length, and frame rate. Give exactly one of --frame or --time. A frame must be 0 to "
+            "Sample an AnimSequence, AnimMontage, or BlendSpace at a frame or time and report each bone's "
+            "location, rotation ([pitch, yaw, roll]), quat ([x, y, z, w]), and scale in component space (or each "
+            "bone's parent space with --space local), with the frame count, play length, and frame rate. "
+            "Give exactly one of --frame or --time. A frame must be 0 to "
             "frame_count - 1 and a time 0 to play_length; a time between keys is interpolated. The pose comes "
             "from the animation's preview mesh, then the skeleton's preview mesh, then the skeleton itself: "
             "the same pose the Animation Editor shows. No AnimBlueprint, post-process graph, or physics is "
             "applied. --mesh samples onto another mesh that uses a compatible skeleton; its reference pose fills "
             "bones the animation does not key. --bones limits the report and lists unknown names in "
-            "missing_bones. Root motion stays in the root bone. Keys are read raw (uncompressed).\n\n"
+            "missing_bones. Root motion stays in the root bone. Keys are read raw (uncompressed) unless --compressed "
+            "is given, which samples what the game plays. An additive animation's offsets are applied onto its "
+            "base pose, and the response names the base.\n\n"
+            "AnimMontage: time is on the montage timeline. The pose comes from the animation under that time in "
+            "one slot track, --slot or the first slot; the response names the segment's animation and its time.\n\n"
+            "BlendSpace: --blend gives the input, one value for 1D or two for 2D, and only --time is accepted, "
+            "because the length depends on the blend input. Every sample plays at the same normalized time; sync "
+            "markers are not used. Additive BlendSpaces (aim offsets) are not supported.\n\n"
             "EXAMPLES:\n"
             "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0\n"
             "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --time 0.5\n"
-            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0 --bones pelvis,hand_l --mesh /Game/Characters/SKM_Hero"
+            "  soft-ue-cli anim pose-at /Game/Anim/AS_Idle --frame 0 --bones pelvis,hand_l --mesh /Game/Characters/SKM_Hero\n"
+            "  soft-ue-cli anim pose-at /Game/Anim/AM_Attack --time 0.4 --slot UpperBody\n"
+            "  soft-ue-cli anim pose-at /Game/Anim/BS_WalkRun --time 0.2 --blend 150"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_apa.add_argument("asset_path", help="AnimSequence asset path to sample")
+    p_apa.add_argument("asset_path", help="AnimSequence, AnimMontage, or BlendSpace asset path to sample")
     sample_at = p_apa.add_mutually_exclusive_group(required=True)
     sample_at.add_argument("--frame", type=int, metavar="N", help="Frame to sample, from 0 to frame_count - 1")
     sample_at.add_argument("--time", type=float, metavar="SECONDS", help="Time in seconds to sample, from 0 to play_length")
@@ -7937,6 +7961,22 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
         dest="mesh_path",
         help="SkeletalMesh to sample onto (default: the animation's preview mesh, then the skeleton's). "
         "Must use the animation's skeleton or one marked compatible with it.",
+    )
+    p_apa.add_argument(
+        "--compressed",
+        action="store_true",
+        help="Sample the compressed data the game plays instead of the raw keys (default: raw)",
+    )
+    p_apa.add_argument(
+        "--slot",
+        metavar="NAME",
+        help="AnimMontage slot track to sample (default: the first slot)",
+    )
+    p_apa.add_argument(
+        "--blend",
+        type=_parse_number_list,
+        metavar="X[,Y]",
+        help="BlendSpace input: one value for a 1D BlendSpace, two for 2D (required for BlendSpaces)",
     )
     p_apa.set_defaults(func=cmd_anim_pose_at)
 

@@ -162,6 +162,11 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
     "anim-pose-at": {
         "properties": {
             "bones": {"type": "array", "description": "Array of bone names to report (default: every bone)"},
+            "blend": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "BlendSpace input: [x] for a 1D BlendSpace, [x, y] for 2D",
+            },
         },
     },
     "cloth weld": {
