@@ -22,9 +22,13 @@ namespace
 	constexpr int32 CaptureSceneMinSize = 16;
 	constexpr int32 CaptureSceneMaxSize = 4096;
 
-	// Scene captures have no auto exposure, temporal AA, or Lumen history on their first frame.
-	// Rendering a few frames first lets those settle before the image that is kept.
+	// Scene captures have no auto exposure, temporal AA, or Lumen history on their first frame, and
+	// each angle starts with a camera cut that clears that history. Rendering a few frames per angle
+	// lets it settle before the image that is kept.
 	constexpr int32 CaptureSceneWarmupFrames = 2;
+
+	// How many matching actor paths an ambiguous-name error lists.
+	constexpr int32 CaptureSceneMaxListedMatches = 5;
 
 	TArray<FString> CaptureSceneReadAngleNames(const TSharedPtr<FJsonObject>& Arguments)
 	{
@@ -78,6 +82,20 @@ namespace
 	TArray<TSharedPtr<FJsonValue>> CaptureSceneVectorJson(double X, double Y, double Z)
 	{
 		return {MakeShared<FJsonValueNumber>(X), MakeShared<FJsonValueNumber>(Y), MakeShared<FJsonValueNumber>(Z)};
+	}
+
+	FString CaptureSceneAmbiguousError(const FString& Name, const TArray<AActor*>& Matches)
+	{
+		TArray<FString> Paths;
+		for (int32 Index = 0; Index < Matches.Num() && Index < CaptureSceneMaxListedMatches; ++Index)
+		{
+			Paths.Add(Matches[Index]->GetPathName());
+		}
+		const FString More = Matches.Num() > CaptureSceneMaxListedMatches
+			? FString::Printf(TEXT(", and %d more"), Matches.Num() - CaptureSceneMaxListedMatches)
+			: FString();
+		return FString::Printf(TEXT("'%s' matches %d actors; pass an actor path to choose one: %s%s"),
+			*Name, Matches.Num(), *FString::Join(Paths, TEXT(", ")), *More);
 	}
 
 	/**
@@ -165,7 +183,7 @@ TMap<FString, FBridgeSchemaProperty> UCaptureSceneTool::GetInputSchema() const
 
 	Schema.Add(TEXT("isolate"), FBridgeSchemaProperty{
 		TEXT("boolean"),
-		TEXT("Render only the target actor (default: false)"),
+		TEXT("Render only the target actor and the actors attached to it (default: false)"),
 		false
 	});
 
@@ -259,9 +277,16 @@ bool UCaptureSceneTool::ResolveTarget(UWorld* World, const FString& Target, AAct
 		return true;
 	}
 
-	if (AActor* Actor = FindActorByNameOrLabel(World, Target))
+	// Labels need not be unique, and framing the wrong actor would look like a valid capture.
+	const TArray<AActor*> Matches = FindActorsByNameOrLabel(World, Target);
+	if (Matches.Num() > 1)
 	{
-		OutActor = Actor;
+		OutError = CaptureSceneAmbiguousError(Target, Matches);
+		return false;
+	}
+	if (Matches.Num() == 1)
+	{
+		OutActor = Matches[0];
 		return true;
 	}
 
@@ -270,7 +295,13 @@ bool UCaptureSceneTool::ResolveTarget(UWorld* World, const FString& Target, AAct
 	{
 		const FString ActorName = Target.Left(DotIndex);
 		const FString ComponentName = Target.Mid(DotIndex + 1);
-		if (AActor* Actor = FindActorByNameOrLabel(World, ActorName))
+		const TArray<AActor*> ActorMatches = FindActorsByNameOrLabel(World, ActorName);
+		if (ActorMatches.Num() > 1)
+		{
+			OutError = CaptureSceneAmbiguousError(ActorName, ActorMatches);
+			return false;
+		}
+		if (AActor* Actor = ActorMatches.Num() == 1 ? ActorMatches[0] : nullptr)
 		{
 			UActorComponent* Component = FindComponentByName(Actor, ComponentName);
 			if (!Component)
@@ -485,10 +516,18 @@ FBridgeToolResult UCaptureSceneTool::Execute(
 	Capture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 	Capture->FOVAngle = Fov;
 	Capture->TextureTarget = RenderTarget;
+	// Isolation keeps actors attached to the target, such as a rider seated on it or a held prop,
+	// because they are part of the pose being checked.
+	TArray<AActor*> IsolatedActors;
 	if (bIsolate)
 	{
+		IsolatedActors.Add(Actor);
+		Actor->GetAttachedActors(IsolatedActors, false, true);
 		Capture->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-		Capture->ShowOnlyActors.Add(Actor);
+		for (AActor* Shown : IsolatedActors)
+		{
+			Capture->ShowOnlyActors.Add(Shown);
+		}
 	}
 	Capture->RegisterComponentWithWorld(World);
 
@@ -507,8 +546,11 @@ FBridgeToolResult UCaptureSceneTool::Execute(
 		const FBridgeSceneCamera& Camera = Cameras[CameraIndex].Value;
 		Capture->SetWorldLocationAndRotation(Camera.Location, Camera.Rotation);
 
-		const int32 Frames = (CameraIndex == 0) ? CaptureSceneWarmupFrames + 1 : 1;
-		for (int32 Frame = 0; Frame < Frames; ++Frame)
+		// Without a cut, the renderer reuses the previous angle's occlusion results and temporal
+		// history, which can cull something visible from this angle or blend in the last view.
+		// The engine clears the flag after each capture, so only the first frame here is a cut.
+		Capture->bCameraCutThisFrame = true;
+		for (int32 Frame = 0; Frame < CaptureSceneWarmupFrames + 1; ++Frame)
 		{
 			Capture->CaptureScene();
 		}
@@ -562,6 +604,15 @@ FBridgeToolResult UCaptureSceneTool::Execute(
 		Result->SetNumberField(TEXT("distance"), Distance);
 	}
 	Result->SetBoolField(TEXT("isolate"), bIsolate);
+	if (bIsolate)
+	{
+		TArray<TSharedPtr<FJsonValue>> IsolatedJson;
+		for (const AActor* Shown : IsolatedActors)
+		{
+			IsolatedJson.Add(MakeShared<FJsonValueString>(GetActorLabelSafe(Shown)));
+		}
+		Result->SetArrayField(TEXT("isolated_actors"), IsolatedJson);
+	}
 	Result->SetNumberField(TEXT("render_width"), Width);
 	Result->SetNumberField(TEXT("render_height"), Height);
 	Result->SetArrayField(TEXT("captures"), Captures);

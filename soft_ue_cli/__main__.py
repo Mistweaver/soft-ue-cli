@@ -7037,7 +7037,7 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     )
     p_capture_scene.add_argument("--width", type=int, metavar="PX", help="Render width in pixels (default: --height, or 1024)")
     p_capture_scene.add_argument("--height", type=int, metavar="PX", help="Render height in pixels (default: --width, or 1024)")
-    p_capture_scene.add_argument("--isolate", action="store_true", help="Render only the target actor")
+    p_capture_scene.add_argument("--isolate", action="store_true", help="Render only the target actor and the actors attached to it")
     p_capture_scene.add_argument("--world", choices=["editor", "pie"], help="World to capture (default: editor)")
     p_capture_scene.add_argument("--pie-instance", type=int, metavar="N", help="FWorldContext::PIEInstance identifying the PIE world")
     p_capture_scene.add_argument("--format", choices=["png", "jpeg"], help="Image format (default: png)")

@@ -41,7 +41,8 @@ public:
 private:
 	/**
 	 * Resolves an actor path, an exact actor name or label, or Actor.Component. Paths are tried
-	 * first because they are unambiguous; a path to a component resolves that component.
+	 * first because they are unambiguous; a path to a component resolves that component. A name or
+	 * label that matches more than one actor is an error that lists the matching actor paths.
 	 * OutComponent is null when the target is a whole actor.
 	 */
 	static bool ResolveTarget(UWorld* World, const FString& Target, AActor*& OutActor, USceneComponent*& OutComponent, FString& OutError);
