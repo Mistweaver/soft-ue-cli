@@ -25,6 +25,7 @@ When a new CLI tool, MCP-exposed tool, or new inspect/diff section is added, ext
 - UE running with SoftUEBridge enabled and reachable
 - Optional AnimBlueprint smoke coverage: set `SOFT_UE_TEST_ANIM_BP=/Game/.../ABP_Test`
 - Optional PhysicsAsset smoke coverage: set `SOFT_UE_TEST_PHYSICS_ASSET=/Game/.../PA_Test` and `SOFT_UE_TEST_PHYSICS_BONE` to a bone that has a body. Component-space coverage needs the PhysicsAsset to have a preview mesh.
+- Optional `anim pose-at` coverage: set `SOFT_UE_TEST_ANIM_SEQUENCE` to an AnimSequence, and optionally `SOFT_UE_TEST_ADDITIVE_ANIM` to an additive AnimSequence, `SOFT_UE_TEST_ANIM_MONTAGE` to an AnimMontage, and `SOFT_UE_TEST_BLENDSPACE_1D` to a 1D BlendSpace.
 - Optional merged-cloth weight-map smoke: set `SOFT_UE_TEST_CLOTH_MESH`, `SOFT_UE_TEST_CLOTH_ASSET_NAME`, and at least three comma-separated `SOFT_UE_TEST_CLOTH_SECTION_INDICES` values.
 
 ## Usage
@@ -1848,7 +1849,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
         _record("anim-pose-at smoke", "anim-pose-at", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ANIM_SEQUENCE")
 
-    _pose_montage = os.environ.get("SOFT_UE_TEST_MONTAGE", "").strip()
+    _pose_montage = os.environ.get("SOFT_UE_TEST_ANIM_MONTAGE", "").strip()
     if _pose_montage:
         run_test("anim-pose-at montage", "anim-pose-at", {"asset_path": _pose_montage, "time": 0.0},
                  lambda r: r.get("success") is True and r.get("asset_type") == "AnimMontage"
@@ -1857,7 +1858,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
                        {"asset_path": _pose_montage, "time": 0.0, "slot": f"{LABEL_PFX}_no_slot"}, "Slots:")
     else:
         _record("anim-pose-at montage", "anim-pose-at", {},
-                True, 0, "skipped: set SOFT_UE_TEST_MONTAGE")
+                True, 0, "skipped: set SOFT_UE_TEST_ANIM_MONTAGE")
 
     _pose_blendspace = os.environ.get("SOFT_UE_TEST_BLENDSPACE_1D", "").strip()
     if _pose_blendspace:
