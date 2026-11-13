@@ -1803,6 +1803,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
                 and bodies[0].get("bone_name") == _physics_bone
                 and bodies[0].get("shape_count", 0) + bodies[0].get("other_shape_count", 0) > 0
                 and all(len(shape.get("location", [])) == 3 for shape in bodies[0].get("shapes", []))
+                and all(len(shape.get("quat", [])) == 4 for shape in bodies[0].get("shapes", []))
                 and r.get("missing_bones") == [_missing_bone]
                 and isinstance(r.get("constraints"), list)
             )

@@ -332,6 +332,37 @@ def test_asset_query_physics_is_registered_and_avoids_version_specific_elements(
     assert "PhysQuerySchemaProperty" in tool_source
 
 
+def test_asset_query_physics_uses_shared_bone_pose_helpers():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
+
+    # Bone filtering, component-space composition, and transform JSON are shared with anim pose-at.
+    assert '#include "Utils/BridgeBonePose.h"' in tool_source
+    for duplicate in (
+        "PhysQueryComponentSpacePose",
+        "PhysQuerySetTransform",
+        "PhysQueryVector",
+        "PhysQueryRotator",
+        "PhysQueryReadBones",
+    ):
+        assert duplicate not in tool_source
+
+
+def test_bridge_bone_pose_helpers_are_engine_free_and_covered_by_a_spec():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeBonePose.h")
+    source = _read("SoftUEBridgeEditor/Private/Utils/BridgeBonePose.cpp")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeBonePoseSpec.cpp")
+
+    assert "namespace SoftUE::BonePose" in header
+    assert "SOFTUEBRIDGEEDITOR_API" in header
+    for function in ("ComponentSpaceFromLocal", "SetTransformFields", "ParseBoneFilter", "VectorToJson"):
+        assert function in header
+        assert function in spec
+
+    # Plain math and JSON only: no asset loading, so the spec runs without content.
+    assert "LoadAssetByPath" not in source
+    assert "SoftUEBridge.Animation.BonePose" in spec
+
+
 def test_asset_query_physics_constraint_frames_follow_space_and_mesh_is_body_space_noop():
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
 

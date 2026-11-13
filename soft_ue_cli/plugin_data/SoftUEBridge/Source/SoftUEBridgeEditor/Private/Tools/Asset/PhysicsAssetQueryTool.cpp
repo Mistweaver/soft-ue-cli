@@ -3,6 +3,7 @@
 #include "Tools/Asset/PhysicsAssetQueryTool.h"
 
 #include "Utils/BridgeAssetModifier.h"
+#include "Utils/BridgeBonePose.h"
 
 #include "Dom/JsonObject.h"
 #include "Engine/SkeletalMesh.h"
@@ -23,31 +24,6 @@ FBridgeSchemaProperty PhysQuerySchemaProperty(const FString& Type, const FString
 	Property.Description = Description;
 	Property.bRequired = bRequired;
 	return Property;
-}
-
-TArray<TSharedPtr<FJsonValue>> PhysQueryVector(const FVector& Value)
-{
-	return {
-		MakeShared<FJsonValueNumber>(Value.X),
-		MakeShared<FJsonValueNumber>(Value.Y),
-		MakeShared<FJsonValueNumber>(Value.Z),
-	};
-}
-
-TArray<TSharedPtr<FJsonValue>> PhysQueryRotator(const FRotator& Value)
-{
-	return {
-		MakeShared<FJsonValueNumber>(Value.Pitch),
-		MakeShared<FJsonValueNumber>(Value.Yaw),
-		MakeShared<FJsonValueNumber>(Value.Roll),
-	};
-}
-
-void PhysQuerySetTransform(const TSharedPtr<FJsonObject>& Json, const FTransform& Transform)
-{
-	Json->SetArrayField(TEXT("location"), PhysQueryVector(Transform.GetLocation()));
-	Json->SetArrayField(TEXT("rotation"), PhysQueryRotator(Transform.Rotator()));
-	Json->SetArrayField(TEXT("scale"), PhysQueryVector(Transform.GetScale3D()));
 }
 
 FString PhysQueryCollisionEnabled(ECollisionEnabled::Type Value)
@@ -95,64 +71,9 @@ FString PhysQueryLinearMotion(ELinearConstraintMotion Value)
 	}
 }
 
-/** Parses "bones" as a JSON array of names or a comma-separated string. */
-TArray<FName> PhysQueryReadBones(const TSharedPtr<FJsonObject>& Arguments)
-{
-	TArray<FName> Bones;
-	if (!Arguments.IsValid() || !Arguments->HasField(TEXT("bones")))
-	{
-		return Bones;
-	}
-
-	TArray<FString> Raw;
-	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
-	FString Joined;
-	if (Arguments->TryGetArrayField(TEXT("bones"), Values) && Values)
-	{
-		for (const TSharedPtr<FJsonValue>& Value : *Values)
-		{
-			FString Item;
-			if (Value.IsValid() && Value->TryGetString(Item))
-			{
-				Raw.Add(Item);
-			}
-		}
-	}
-	else if (Arguments->TryGetStringField(TEXT("bones"), Joined))
-	{
-		Joined.ParseIntoArray(Raw, TEXT(","), true);
-	}
-
-	for (FString& Item : Raw)
-	{
-		Item.TrimStartAndEndInline();
-		if (!Item.IsEmpty())
-		{
-			Bones.AddUnique(FName(*Item));
-		}
-	}
-	return Bones;
-}
-
 bool PhysQueryWantsBone(const TArray<FName>& Filter, FName Bone)
 {
 	return Filter.Num() == 0 || Filter.Contains(Bone);
-}
-
-/** Reference-pose component-space transform for every bone. Parents precede children in a reference skeleton. */
-TArray<FTransform> PhysQueryComponentSpacePose(const FReferenceSkeleton& RefSkeleton)
-{
-	const TArray<FTransform>& LocalPose = RefSkeleton.GetRefBonePose();
-	TArray<FTransform> ComponentPose;
-	ComponentPose.SetNum(LocalPose.Num());
-	for (int32 BoneIndex = 0; BoneIndex < LocalPose.Num(); ++BoneIndex)
-	{
-		const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
-		ComponentPose[BoneIndex] = ParentIndex == INDEX_NONE
-			? LocalPose[BoneIndex]
-			: LocalPose[BoneIndex] * ComponentPose[ParentIndex];
-	}
-	return ComponentPose;
 }
 
 /** Shape fields common to every element. BoneTransform is identity in body space. */
@@ -162,7 +83,7 @@ TSharedPtr<FJsonObject> PhysQueryShapeBase(const FKShapeElem& Shape, const TCHAR
 	Json->SetStringField(TEXT("type"), Type);
 	Json->SetStringField(TEXT("name"), Shape.GetName().ToString());
 	Json->SetStringField(TEXT("collision_enabled"), PhysQueryCollisionEnabled(Shape.GetCollisionEnabled()));
-	PhysQuerySetTransform(Json, Shape.GetTransform() * BoneTransform);
+	SoftUE::BonePose::SetTransformFields(Json, Shape.GetTransform() * BoneTransform);
 	return Json;
 }
 
@@ -180,7 +101,7 @@ TArray<TSharedPtr<FJsonValue>> PhysQueryShapes(const FKAggregateGeom& Geom, cons
 	{
 		TSharedPtr<FJsonObject> Json = PhysQueryShapeBase(Box, TEXT("box"), BoneTransform);
 		// Box X, Y, and Z are full edge lengths.
-		Json->SetArrayField(TEXT("size"), PhysQueryVector(FVector(Box.X, Box.Y, Box.Z)));
+		Json->SetArrayField(TEXT("size"), SoftUE::BonePose::VectorToJson(FVector(Box.X, Box.Y, Box.Z)));
 		Shapes.Add(MakeShared<FJsonValueObject>(Json));
 	}
 	for (const FKSphylElem& Capsule : Geom.SphylElems)
@@ -205,8 +126,8 @@ TArray<TSharedPtr<FJsonValue>> PhysQueryShapes(const FKAggregateGeom& Geom, cons
 		TSharedPtr<FJsonObject> Json = PhysQueryShapeBase(Convex, TEXT("convex"), BoneTransform);
 		// Vertices and bounds are in the element's own frame, before its transform.
 		Json->SetNumberField(TEXT("vertex_count"), Convex.VertexData.Num());
-		Json->SetArrayField(TEXT("bounds_min"), PhysQueryVector(Convex.ElemBox.Min));
-		Json->SetArrayField(TEXT("bounds_max"), PhysQueryVector(Convex.ElemBox.Max));
+		Json->SetArrayField(TEXT("bounds_min"), SoftUE::BonePose::VectorToJson(Convex.ElemBox.Min));
+		Json->SetArrayField(TEXT("bounds_max"), SoftUE::BonePose::VectorToJson(Convex.ElemBox.Max));
 		Shapes.Add(MakeShared<FJsonValueObject>(Json));
 	}
 
@@ -237,21 +158,21 @@ TSharedPtr<FJsonObject> PhysQueryConstraintFrame(
 	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
 	if (!RefSkeleton)
 	{
-		PhysQuerySetTransform(Json, Frame);
+		SoftUE::BonePose::SetTransformFields(Json, Frame);
 		return Json;
 	}
 
 	const int32 BoneIndex = RefSkeleton->FindBoneIndex(Bone);
 	if (ComponentPose.IsValidIndex(BoneIndex))
 	{
-		PhysQuerySetTransform(Json, Frame * ComponentPose[BoneIndex]);
+		SoftUE::BonePose::SetTransformFields(Json, Frame * ComponentPose[BoneIndex]);
 	}
 	else
 	{
 		Warnings.AddUnique(FString::Printf(
 			TEXT("Constraint bone %s is not in the pose mesh; its constraint frame is reported in body space."),
 			*Bone.ToString()));
-		PhysQuerySetTransform(Json, Frame);
+		SoftUE::BonePose::SetTransformFields(Json, Frame);
 		Json->SetStringField(TEXT("space"), TEXT("body"));
 	}
 	return Json;
@@ -333,7 +254,7 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 	}
 	const bool bComponentSpace = Space == TEXT("component");
 	const bool bIncludeConstraints = GetBoolArgOrDefault(Arguments, TEXT("include_constraints"), true);
-	const TArray<FName> BoneFilter = PhysQueryReadBones(Arguments);
+	const TArray<FName> BoneFilter = SoftUE::BonePose::ParseBoneFilter(Arguments);
 
 	FString Error;
 	UPhysicsAsset* PhysicsAsset = FBridgeAssetModifier::LoadAssetByPath<UPhysicsAsset>(AssetPath, Error);
@@ -373,7 +294,7 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 				TEXT("asset-query-physics: component space needs a SkeletalMesh. %s has no preview mesh; pass mesh_path."),
 				*PhysicsAsset->GetPathName()));
 		}
-		ComponentPose = PhysQueryComponentSpacePose(PoseMesh->GetRefSkeleton());
+		ComponentPose = SoftUE::BonePose::ComponentSpaceFromLocal(PoseMesh->GetRefSkeleton(), PoseMesh->GetRefSkeleton().GetRefBonePose());
 	}
 
 	TArray<FName> FoundBones;
@@ -400,7 +321,7 @@ FBridgeToolResult UPhysicsAssetQueryTool::Execute(
 			{
 				BoneTransform = ComponentPose[BoneIndex];
 				TSharedPtr<FJsonObject> BoneJson = MakeShared<FJsonObject>();
-				PhysQuerySetTransform(BoneJson, BoneTransform);
+				SoftUE::BonePose::SetTransformFields(BoneJson, BoneTransform);
 				BodyJson->SetObjectField(TEXT("bone_transform"), BoneJson);
 			}
 			else
