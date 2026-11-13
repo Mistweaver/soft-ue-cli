@@ -427,3 +427,30 @@ def test_actor_lookup_is_shared_through_the_tool_base():
         "SoftUEBridgeEditor/Public/Tools/PIE/PieSessionTool.h",
     ):
         assert "FindActorByName" not in _read(header), header
+
+
+def test_capture_tools_share_one_image_output_pipeline():
+    viewport = _read("SoftUEBridge/Private/Tools/CaptureViewportTool.cpp")
+    screenshot = _read("SoftUEBridgeEditor/Private/Tools/Editor/CaptureScreenshotTool.cpp")
+    shared = _read("SoftUEBridge/Private/Utils/BridgeImageOutput.cpp")
+
+    for source in (viewport, screenshot):
+        assert '#include "Utils/BridgeImageOutput.h"' in source
+        assert "SoftUE::ImageOutput::EncodeCapture(" in source
+        assert "FBridgeImageOutputOptions::FromArguments(Arguments)" in source
+        # The encoder, resize, and color mode code live only in the shared utility.
+        assert "IImageWrapper" not in source
+        assert "ApplyColorMode" not in source
+        assert "ResolveCaptureSize" not in source
+        assert "FBase64::Encode" not in source
+
+    # Each tool keeps its own file name prefix so cleanup_previous only removes its own files.
+    assert 'TEXT("viewport_")' in viewport
+    assert 'TEXT("screenshot_")' in screenshot
+
+    # Screenshot viewport mode forwards the same options to capture-viewport.
+    assert "Options.WriteArguments(Args)" in screenshot
+
+    # Unity builds share anonymous namespaces, so shared helpers carry a file-specific prefix.
+    assert "ImageOutputResize(" in shared
+    assert "bool ResizeImage(" not in shared
