@@ -56,6 +56,13 @@ namespace SoftUE::ImageOutput
 	SOFTUEBRIDGE_API FString GetCaptureDirectory();
 
 	/**
+	 * Deletes files in GetCaptureDirectory() whose names start with FilePrefix. A tool that writes
+	 * several images in one call runs this once before the first image, because cleanup_previous
+	 * inside EncodeCapture runs per image and would delete the call's own earlier images.
+	 */
+	SOFTUEBRIDGE_API void DeletePreviousCaptures(const FString& FilePrefix);
+
+	/**
 	 * Transforms, encodes, and outputs a captured image.
 	 *
 	 * File mode writes <FilePrefix><hash>.<format> to GetCaptureDirectory(). The returned object holds

@@ -40,6 +40,7 @@
 
 // Editor
 #include "Tools/Editor/CaptureScreenshotTool.h"
+#include "Tools/Editor/CaptureSceneTool.h"
 
 // Material
 #include "Tools/Material/QueryMaterialTool.h"
@@ -349,6 +350,7 @@ void FSoftUEBridgeEditorModule::StartupModule()
 
 	// Editor
 	Registry.RegisterToolClass<UCaptureScreenshotTool>();
+	Registry.RegisterToolClass<UCaptureSceneTool>();
 
 	// Material
 	Registry.RegisterToolClass<UQueryMaterialTool>();

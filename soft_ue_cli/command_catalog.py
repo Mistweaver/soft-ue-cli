@@ -799,6 +799,15 @@ _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
         requires_editor=True,
         examples=["soft-ue-cli capture screenshot --source pie-window --output base64"],
     ),
+    "capture scene": _entry(
+        "capture scene",
+        "Render the editor or PIE world from cameras placed around an actor or component, one image per angle, without moving the editor viewport.",
+        layer="bridge",
+        category="capture",
+        requires_bridge=True,
+        requires_editor=True,
+        examples=["soft-ue-cli capture scene --target BP_Hero --angles front,side,top --isolate"],
+    ),
     "capture-viewport": _entry(
         "capture-viewport",
         "Removed flat command for viewport capture.",

@@ -306,6 +306,14 @@ TOOL_OVERRIDES: dict[str, dict[str, Any]] = {
             "positions": {"type": "array", "description": "Array of {guid, x, y} position specs"},
         },
     },
+    # capture scene: angles and the explicit camera arrive as native JSON arrays in MCP.
+    "capture scene": {
+        "properties": {
+            "angles": {"type": "array", "description": "Array of named angles: front, back, left, right, side, top, three-quarter (default: front, side, top)"},
+            "location": {"type": "array", "description": "[X, Y, Z] explicit world-space camera location; requires rotation"},
+            "rotation": {"type": "array", "description": "[Pitch, Yaw, Roll] explicit world-space camera rotation in degrees; requires location"},
+        },
+    },
     # capture-screenshot: mode is optional (default: viewport)
     "capture-screenshot": {
         "properties": {

@@ -105,17 +105,6 @@ namespace
 			Pixel.B = Value;
 		}
 	}
-
-	void ImageOutputDeletePrevious(const FString& Directory, const FString& FilePrefix)
-	{
-		TArray<FString> FoundFiles;
-		IFileManager::Get().FindFiles(FoundFiles, *(Directory / (FilePrefix + TEXT("*"))), true, false);
-
-		for (const FString& FileName : FoundFiles)
-		{
-			IFileManager::Get().Delete(*FPaths::Combine(Directory, FileName), false, true);
-		}
-	}
 }
 
 FBridgeImageOutputOptions FBridgeImageOutputOptions::FromArguments(const TSharedPtr<FJsonObject>& Arguments)
@@ -244,6 +233,18 @@ FString SoftUE::ImageOutput::GetCaptureDirectory()
 	return FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("soft-ue-bridge"));
 }
 
+void SoftUE::ImageOutput::DeletePreviousCaptures(const FString& FilePrefix)
+{
+	const FString Directory = GetCaptureDirectory();
+	TArray<FString> FoundFiles;
+	IFileManager::Get().FindFiles(FoundFiles, *(Directory / (FilePrefix + TEXT("*"))), true, false);
+
+	for (const FString& FileName : FoundFiles)
+	{
+		IFileManager::Get().Delete(*FPaths::Combine(Directory, FileName), false, true);
+	}
+}
+
 TSharedPtr<FJsonObject> SoftUE::ImageOutput::EncodeCapture(
 	TArray<FColor>& Pixels,
 	int32 Width,
@@ -280,10 +281,10 @@ TSharedPtr<FJsonObject> SoftUE::ImageOutput::EncodeCapture(
 		IFileManager::Get().MakeDirectory(*Directory, true);
 		if (Options.bCleanupPrevious)
 		{
-			ImageOutputDeletePrevious(Directory, FilePrefix);
+			DeletePreviousCaptures(FilePrefix);
 		}
 
-		const FString Hash = FMD5::HashBytes(ImageData.GetData(), FMath::Min(1024, ImageData.Num()));
+		const FString Hash = FMD5::HashBytes(ImageData.GetData(), ImageData.Num());
 		const FString FilePath = FPaths::Combine(
 			Directory,
 			FString::Printf(TEXT("%s%s.%s"), *FilePrefix, *Hash.Left(8), *Options.Format));

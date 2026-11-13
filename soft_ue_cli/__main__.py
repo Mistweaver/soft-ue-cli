@@ -2386,6 +2386,84 @@ def cmd_capture_viewport(args: argparse.Namespace) -> None:
     _print_json(_run_tool("capture-viewport", arguments))
 
 
+def _copy_scene_captures_to_dir(result: dict, output_dir: str) -> dict:
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied: list = []
+    for capture in result.get("captures") or []:
+        bridge_path = capture.get("file_path")
+        if not bridge_path:
+            print("error: --output-dir requires file output from capture scene", file=sys.stderr)
+            sys.exit(1)
+        source = Path(str(bridge_path))
+        if not source.exists():
+            print(f"error: bridge capture file not found: {source}", file=sys.stderr)
+            sys.exit(1)
+        target = target_dir / source.name
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+        updated = dict(capture)
+        updated["bridge_file_path"] = str(source)
+        updated["file_path"] = str(target)
+        copied.append(updated)
+    return {**result, "captures": copied, "output_dir": str(target_dir)}
+
+
+def cmd_capture_scene(args: argparse.Namespace) -> None:
+    has_location = args.location is not None
+    has_rotation = args.rotation is not None
+    if has_location != has_rotation:
+        raise SystemExit("error: --location and --rotation must be given together")
+    if has_location and args.angles:
+        raise SystemExit("error: --angles cannot be combined with --location/--rotation")
+    if args.pie_instance is not None and args.world != "pie":
+        raise SystemExit("error: --pie-instance requires --world pie")
+    if args.output_dir and args.output == "base64":
+        raise SystemExit("error: --output-dir requires file output, not --output base64")
+
+    arguments: dict = {"target": _fix_msys_asset_path(args.target)}
+    if args.angles:
+        if isinstance(args.angles, list):
+            angles = [str(angle).strip() for angle in args.angles]
+        else:
+            angles = [part.strip() for part in str(args.angles).split(",")]
+        arguments["angles"] = [angle for angle in angles if angle]
+    if has_location:
+        arguments["location"] = _parse_float_list_arg(args.location, "--location", 3)
+        arguments["rotation"] = _parse_float_list_arg(args.rotation, "--rotation", 3)
+    if args.distance is not None:
+        arguments["distance"] = args.distance
+    if args.fov is not None:
+        arguments["fov"] = args.fov
+    if args.yaw_offset is not None:
+        arguments["yaw_offset"] = args.yaw_offset
+    if args.isolate:
+        arguments["isolate"] = True
+    if args.world:
+        arguments["world"] = args.world
+    if args.pie_instance is not None:
+        arguments["pie_instance"] = args.pie_instance
+    if args.format:
+        arguments["format"] = args.format
+    if args.output:
+        arguments["output"] = args.output
+    if args.scale is not None:
+        arguments["scale"] = args.scale
+    if args.width is not None:
+        arguments["width"] = args.width
+    if args.height is not None:
+        arguments["height"] = args.height
+    if args.color_mode:
+        arguments["color_mode"] = args.color_mode
+    if args.cleanup_previous:
+        arguments["cleanup_previous"] = True
+
+    result = _run_tool("capture-scene", arguments)
+    if args.output_dir:
+        result = _copy_scene_captures_to_dir(result, args.output_dir)
+    _print_json(result)
+
+
 def cmd_compare_umg_screenshot(args: argparse.Namespace) -> None:
     result = _compare_umg_screenshot_result(
         args.reference_image,
@@ -6910,6 +6988,78 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_capture_screenshot.add_argument("--output-file", metavar="PATH", help="Copy file output to a deterministic local path")
     _add_capture_transform_args(p_capture_screenshot)
     p_capture_screenshot.set_defaults(func=cmd_capture_screenshot)
+
+    p_capture_scene = capture_sub.add_parser(
+        "scene",
+        help="Render the world from cameras placed around an actor or component.",
+        description=(
+            "Render the editor or PIE world from cameras placed around a target and write one image per angle.\n"
+            "A temporary scene capture component does the rendering, so the editor viewport does not move\n"
+            "and nothing is added to the level.\n\n"
+            "Named angles are relative to the target's facing: front looks at its front. With a skeletal mesh,\n"
+            "the facing follows the mesh's +Y (the import convention, right for Characters and bare skeletal\n"
+            "mesh actors); otherwise it is the actor's forward. --yaw-offset corrects other meshes.\n"
+            "Valid angles: front, back, left, right, side (same as right), top, three-quarter.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli capture scene --target BP_Hero\n"
+            "  soft-ue-cli capture scene --target BP_Hero.Mesh --angles front,three-quarter --distance 150\n"
+            "  soft-ue-cli capture scene --target BP_Hero --isolate --output-dir Saved/Poses\n"
+            "  soft-ue-cli capture scene --target BP_Hero --location 200,0,100 --rotation -10,180,0\n"
+            "  soft-ue-cli capture scene --target BP_Hero --world pie --pie-instance 1"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_capture_scene.add_argument(
+        "--target",
+        required=True,
+        metavar="NAME",
+        help="Actor path, actor name or label (exact, ignoring case), or Actor.Component",
+    )
+    p_capture_scene.add_argument(
+        "--angles",
+        metavar="LIST",
+        help="Comma-separated named angles (default: front,side,top)",
+    )
+    p_capture_scene.add_argument("--location", metavar="X,Y,Z", help="Explicit world-space camera location; requires --rotation")
+    p_capture_scene.add_argument("--rotation", metavar="P,Y,R", help="Explicit world-space camera rotation in degrees; requires --location")
+    p_capture_scene.add_argument(
+        "--distance",
+        type=float,
+        metavar="CM",
+        help="Camera distance from the target's bounds center (default: fit the bounds in view)",
+    )
+    p_capture_scene.add_argument("--fov", type=float, metavar="DEG", help="Horizontal field of view in degrees (default: 60)")
+    p_capture_scene.add_argument(
+        "--yaw-offset",
+        type=float,
+        metavar="DEG",
+        help="Degrees added to the target's facing, for meshes authored facing another way (default: 0)",
+    )
+    p_capture_scene.add_argument("--width", type=int, metavar="PX", help="Render width in pixels (default: --height, or 1024)")
+    p_capture_scene.add_argument("--height", type=int, metavar="PX", help="Render height in pixels (default: --width, or 1024)")
+    p_capture_scene.add_argument("--isolate", action="store_true", help="Render only the target actor")
+    p_capture_scene.add_argument("--world", choices=["editor", "pie"], help="World to capture (default: editor)")
+    p_capture_scene.add_argument("--pie-instance", type=int, metavar="N", help="FWorldContext::PIEInstance identifying the PIE world")
+    p_capture_scene.add_argument("--format", choices=["png", "jpeg"], help="Image format (default: png)")
+    p_capture_scene.add_argument("--output", choices=["file", "base64"], help="Output mode: file (default) or base64")
+    p_capture_scene.add_argument("--output-dir", metavar="DIR", help="Copy each angle's file into this directory")
+    p_capture_scene.add_argument(
+        "--scale",
+        type=float,
+        metavar="PERCENT",
+        help="Scale output image size by percentage; 100 keeps the render size, 50 halves width and height",
+    )
+    p_capture_scene.add_argument(
+        "--color-mode",
+        choices=["color", "grayscale", "monochrome"],
+        help="Output color mode (default: color)",
+    )
+    p_capture_scene.add_argument(
+        "--cleanup-previous",
+        action="store_true",
+        help="Delete earlier capture scene files before writing this call's files",
+    )
+    p_capture_scene.set_defaults(func=cmd_capture_scene)
 
     p_metasound = sub.add_parser(
         "metasound",

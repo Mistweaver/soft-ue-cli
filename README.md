@@ -443,9 +443,10 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 
 | Command | Description |
 |---------|-------------|
-| `capture` | Canonical capture command family for viewport and screenshot capture |
+| `capture` | Canonical capture command family for viewport, screenshot, and scene capture |
 | `capture screenshot` | Capture the editor viewport, PIE window, or a specific editor panel |
 | `capture viewport` | Capture the current viewport (auto-detects PIE, standalone, or editor) |
+| `capture scene` | Render an actor or component from named angles or an explicit camera without moving the editor viewport |
 | `set-viewport-camera` | Set editor viewport camera position, rotation, or preset view (top/front/right/perspective) |
 
 ### Logging and Console Variables
@@ -782,6 +783,14 @@ soft-ue-cli pie-session stop
 soft-ue-cli capture screenshot --source viewport --output file
 soft-ue-cli capture viewport --source editor --scale 50 --color-mode grayscale --output file
 soft-ue-cli capture viewport --source editor --width 960 --color-mode monochrome --output file
+```
+
+### Capture an actor from several angles
+
+```bash
+soft-ue-cli capture scene --target BP_Hero --angles front,side,top,three-quarter --isolate
+soft-ue-cli capture scene --target BP_Hero.Mesh --distance 150 --output-dir Saved/Poses
+soft-ue-cli capture scene --target BP_Hero --world pie --angles front
 ```
 
 ### Edit a Blueprint graph programmatically

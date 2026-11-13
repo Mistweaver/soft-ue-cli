@@ -584,7 +584,7 @@ def test_tool_count_is_reasonable():
     """Should have a stable, non-trivial tool count after exclusions."""
     tools = extract_tools()
     assert len(tools) >= 60
-    assert len(tools) <= 265
+    assert len(tools) <= 270
 
 
 def test_skeletal_socket_tools_are_exposed():
@@ -703,3 +703,17 @@ def test_asset_query_physics_schema_uses_native_json_types():
         assert params["properties"]["mesh_path"]["type"] == "string"
         assert params["properties"]["no_constraints"]["type"] == "boolean"
         assert params.get("required", []) == ["asset_path"]
+
+
+def test_capture_scene_schema_uses_native_json_types():
+    tool = next(t for t in extract_tools() if t["name"] == "capture scene")
+    params = tool["parameters"]
+
+    for name in ("angles", "location", "rotation"):
+        assert params["properties"][name]["type"] == "array", name
+    assert params["properties"]["target"]["type"] == "string"
+    assert params["properties"]["distance"]["type"] == "number"
+    assert params["properties"]["width"]["type"] == "integer"
+    assert params["properties"]["isolate"]["type"] == "boolean"
+    assert params["properties"]["world"]["enum"] == ["editor", "pie"]
+    assert params.get("required", []) == ["target"]

@@ -990,6 +990,11 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
     run_test("capture-screenshot", "capture-screenshot", {}, has("file_path"))
     run_test("capture-screenshot scaled monochrome", "capture-screenshot",
              {"scale": 50, "color_mode": "monochrome"}, has("file_path", "width", "height"))
+    # a1 is a StaticMeshActor with no mesh, so it has no bounds to fit; pass an explicit distance.
+    run_test("capture-scene front/top", "capture-scene",
+             {"target": a1, "angles": ["front", "top"], "distance": 300, "width": 256, "height": 256},
+             lambda r: [c.get("angle") for c in r.get("captures", [])] == ["front", "top"]
+             and all(c.get("file_path") and c.get("camera") for c in r["captures"]))
     _visual_tmp = tempfile.mkdtemp(prefix="soft_ue_visual_")
     _ref_ppm = os.path.join(_visual_tmp, "reference.ppm")
     _cap_ppm = os.path.join(_visual_tmp, "captured.ppm")

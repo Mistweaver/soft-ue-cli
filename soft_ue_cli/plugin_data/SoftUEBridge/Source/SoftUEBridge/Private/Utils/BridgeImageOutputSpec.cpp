@@ -202,6 +202,62 @@ bool FBridgeImageOutputSpec::RunTest(const FString& Parameters)
 		IFileManager::Get().Delete(*OtherPath, false, true);
 	}
 
+	// images that differ only after their first 1024 encoded bytes get different file names
+	{
+		// Noise keeps the PNG large, so the one changed pixel at the end lands well past byte 1024.
+		const int32 Size = 128;
+		FRandomStream Random(42);
+		TArray<FColor> First;
+		First.SetNumUninitialized(Size * Size);
+		for (FColor& Pixel : First)
+		{
+			Pixel = FColor(Random.RandRange(0, 255), Random.RandRange(0, 255), Random.RandRange(0, 255), 255);
+		}
+		TArray<FColor> Second = First;
+		Second.Last() = FColor(Second.Last().R ^ 0xFF, Second.Last().G, Second.Last().B, 255);
+
+		const TArray<uint8> FirstBytes = SoftUE::ImageOutput::CompressImage(First, Size, Size, TEXT("png"));
+		const TArray<uint8> SecondBytes = SoftUE::ImageOutput::CompressImage(Second, Size, Size, TEXT("png"));
+		const bool bSharePrefix = FirstBytes.Num() > 1024 && SecondBytes.Num() > 1024
+			&& FMemory::Memcmp(FirstBytes.GetData(), SecondBytes.GetData(), 1024) == 0;
+		TestTrue(TEXT("precondition: encodings share their first 1024 bytes"), bSharePrefix);
+
+		FBridgeImageOutputOptions Options;
+		FString Error;
+		const TSharedPtr<FJsonObject> FirstResult = SoftUE::ImageOutput::EncodeCapture(First, Size, Size, Options, TEXT("bridgespec_"), Error);
+		const TSharedPtr<FJsonObject> SecondResult = SoftUE::ImageOutput::EncodeCapture(Second, Size, Size, Options, TEXT("bridgespec_"), Error);
+		if (FirstResult.IsValid() && SecondResult.IsValid())
+		{
+			const FString FirstPath = FirstResult->GetStringField(TEXT("file_path"));
+			const FString SecondPath = SecondResult->GetStringField(TEXT("file_path"));
+			TestNotEqual(TEXT("different images get different file names"), FirstPath, SecondPath);
+			IFileManager::Get().Delete(*FirstPath, false, true);
+			IFileManager::Get().Delete(*SecondPath, false, true);
+		}
+		else
+		{
+			AddError(FString::Printf(TEXT("file encode failed: %s"), *Error));
+		}
+	}
+
+	// DeletePreviousCaptures removes only files with the given prefix
+	{
+		const FString Directory = SoftUE::ImageOutput::GetCaptureDirectory();
+		IFileManager::Get().MakeDirectory(*Directory, true);
+		const FString StalePath = Directory / TEXT("bridgespec_front_stale.png");
+		const FString OtherPath = Directory / TEXT("bridgespecother_keep.png");
+		FFileHelper::SaveStringToFile(TEXT("stale"), *StalePath);
+		FFileHelper::SaveStringToFile(TEXT("keep"), *OtherPath);
+
+		SoftUE::ImageOutput::DeletePreviousCaptures(TEXT("bridgespec_"));
+
+		TestFalse(TEXT("same-prefix file is deleted"), IFileManager::Get().FileExists(*StalePath));
+		TestTrue(TEXT("other-prefix file is kept"), IFileManager::Get().FileExists(*OtherPath));
+
+		IFileManager::Get().Delete(*StalePath, false, true);
+		IFileManager::Get().Delete(*OtherPath, false, true);
+	}
+
 	return true;
 }
 
