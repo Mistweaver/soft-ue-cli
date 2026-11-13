@@ -6,7 +6,6 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
-#include "EngineUtils.h"
 #include "ScopedTransaction.h"
 
 FString UBatchDeleteActorTool::GetToolDescription() const
@@ -31,21 +30,6 @@ TMap<FString, FBridgeSchemaProperty> UBatchDeleteActorTool::GetInputSchema() con
 TArray<FString> UBatchDeleteActorTool::GetRequiredParams() const
 {
 	return { TEXT("actors") };
-}
-
-AActor* UBatchDeleteActorTool::FindActorByNameOrLabel(UWorld* World, const FString& ActorName) const
-{
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* Actor = *It;
-		if (!Actor) continue;
-		if (Actor->GetName().Equals(ActorName, ESearchCase::IgnoreCase) ||
-			Actor->GetActorLabel().Equals(ActorName, ESearchCase::IgnoreCase))
-		{
-			return Actor;
-		}
-	}
-	return nullptr;
 }
 
 FBridgeToolResult UBatchDeleteActorTool::Execute(

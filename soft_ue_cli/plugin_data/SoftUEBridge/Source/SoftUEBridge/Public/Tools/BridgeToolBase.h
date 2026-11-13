@@ -8,6 +8,10 @@
 #include "Tools/BridgeToolResult.h"
 #include "BridgeToolBase.generated.h"
 
+class AActor;
+class UActorComponent;
+class UWorld;
+
 UENUM()
 enum class EBridgeToolExecutionContext : uint8
 {
@@ -87,6 +91,21 @@ protected:
 
 	/** Find a world by type: "editor", "pie", or "game". Empty string returns the first available. */
 	static UWorld* FindWorldByType(const FString& WorldType);
+
+	/**
+	 * First actor whose name or label equals NameOrLabel, ignoring case. No wildcards, so tools that
+	 * delete or modify actors cannot reach more than the one actor the caller named.
+	 */
+	static AActor* FindActorByNameOrLabel(UWorld* World, const FString& NameOrLabel);
+
+	/**
+	 * First actor whose name or label matches Pattern under the MatchesWildcard rules. An empty Pattern
+	 * matches nothing, so a missing actor name cannot resolve to an arbitrary actor.
+	 */
+	static AActor* FindActorByPattern(UWorld* World, const FString& Pattern);
+
+	/** First component on Actor whose object name equals ComponentName, ignoring case. */
+	static UActorComponent* FindComponentByName(AActor* Actor, const FString& ComponentName);
 };
 
 

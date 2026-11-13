@@ -3,7 +3,6 @@
 #include "Tools/CallFunctionTool.h"
 #include "Engine/World.h"
 #include "Engine/EngineTypes.h"
-#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "SoftUEBridgeModule.h"
 #include "UObject/Package.h"
@@ -382,21 +381,7 @@ FBridgeToolResult UCallFunctionTool::Execute(const TSharedPtr<FJsonObject>& Args
 			return FBridgeToolResult::Error(TEXT("call-function: no world available (specify world: editor|pie|game)"));
 		}
 
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			AActor* Actor = *It;
-			if (!Actor)
-			{
-				continue;
-			}
-
-			if (MatchesWildcard(Actor->GetName(), ActorName) || MatchesWildcard(GetActorLabelSafe(Actor), ActorName))
-			{
-				TargetObject = Actor;
-				break;
-			}
-		}
-
+		TargetObject = FindActorByPattern(World, ActorName);
 		if (!TargetObject)
 		{
 			return FBridgeToolResult::Error(FString::Printf(TEXT("call-function: actor '%s' not found"), *ActorName));

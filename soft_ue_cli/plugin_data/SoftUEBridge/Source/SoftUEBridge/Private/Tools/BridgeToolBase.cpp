@@ -4,6 +4,8 @@
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
+#include "Components/ActorComponent.h"
+#include "EngineUtils.h"
 
 FString BridgeToolExecutionContextToString(EBridgeToolExecutionContext Context)
 {
@@ -173,6 +175,56 @@ UWorld* UBridgeToolBase::FindWorldByType(const FString& WorldType)
 			{
 				return Ctx.World();
 			}
+		}
+	}
+	return nullptr;
+}
+
+AActor* UBridgeToolBase::FindActorByNameOrLabel(UWorld* World, const FString& NameOrLabel)
+{
+	if (!World || NameOrLabel.IsEmpty()) return nullptr;
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor) continue;
+		if (Actor->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase) ||
+			GetActorLabelSafe(Actor).Equals(NameOrLabel, ESearchCase::IgnoreCase))
+		{
+			return Actor;
+		}
+	}
+	return nullptr;
+}
+
+AActor* UBridgeToolBase::FindActorByPattern(UWorld* World, const FString& Pattern)
+{
+	// MatchesWildcard treats an empty pattern as "match anything", which would hand back an arbitrary actor.
+	if (!World || Pattern.IsEmpty()) return nullptr;
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor) continue;
+		if (MatchesWildcard(Actor->GetName(), Pattern) || MatchesWildcard(GetActorLabelSafe(Actor), Pattern))
+		{
+			return Actor;
+		}
+	}
+	return nullptr;
+}
+
+UActorComponent* UBridgeToolBase::FindComponentByName(AActor* Actor, const FString& ComponentName)
+{
+	if (!Actor) return nullptr;
+
+	TArray<UActorComponent*> Components;
+	Actor->GetComponents(Components);
+	for (UActorComponent* Component : Components)
+	{
+		if (Component && Component->GetName().Equals(ComponentName, ESearchCase::IgnoreCase))
+		{
+			return Component;
 		}
 	}
 	return nullptr;
