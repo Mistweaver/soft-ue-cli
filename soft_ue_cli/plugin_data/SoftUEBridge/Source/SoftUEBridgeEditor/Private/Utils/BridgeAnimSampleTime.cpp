@@ -10,6 +10,11 @@ namespace
 
 namespace SoftUE::AnimSampleTime
 {
+int32 NumKeysForLength(const FFrameRate& FrameRate, double PlayLength)
+{
+	return FrameRate.AsFrameTime(FMath::Max(PlayLength, 0.0)).RoundToFrame().Value + 1;
+}
+
 bool Resolve(
 	const FBridgeAnimTimeline& Timeline,
 	TOptional<int32> Frame,

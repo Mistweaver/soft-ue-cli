@@ -76,6 +76,20 @@ bool FBridgeAnimSampleTimeSpec::RunTest(const FString& Parameters)
 	TestTrue(TEXT("frameless error asks for time"), Error.Contains(TEXT("time")));
 	TestTrue(TEXT("time on a frameless timeline resolves"), Resolve(NoFrames, {}, 1.5, Out, Error));
 
+	// key counts include both ends, so the last frame lands on the play length
+	TestEqual(TEXT("one second at 30 fps is 31 keys"), NumKeysForLength(FFrameRate(30, 1), 1.0), 31);
+	TestEqual(TEXT("2.5 seconds at 30 fps is 76 keys"), NumKeysForLength(FFrameRate(30, 1), 2.5), 76);
+	TestEqual(TEXT("a zero-length asset has one key"), NumKeysForLength(FFrameRate(30, 1), 0.0), 1);
+
+	FBridgeAnimTimeline Montage;
+	Montage.FrameRate = FFrameRate(30, 1);
+	Montage.PlayLength = 3.0;
+	Montage.NumKeys = NumKeysForLength(Montage.FrameRate, Montage.PlayLength);
+	Out = FBridgeAnimSampleTime();
+	Error.Reset();
+	TestTrue(TEXT("the frame at the play length resolves"), Resolve(Montage, 90, {}, Out, Error));
+	TestEqual(TEXT("the last frame is the play length"), Out.Time, 3.0, Tolerance);
+
 	return true;
 }
 

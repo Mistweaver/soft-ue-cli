@@ -4618,6 +4618,17 @@ def test_anim_pose_at_rejects_non_numeric_blend():
         build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0", "--blend", "fast,90"])
 
 
+def test_anim_pose_at_rejects_non_numeric_native_blend_list(capsys):
+    # MCP skips argparse, so a list item that is not a number is reported, not raised as ValueError.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0"])
+    args.blend = ["fast", 90]
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        with pytest.raises(SystemExit):
+            args.func(args)
+    mock_run.assert_not_called()
+    assert "blend" in capsys.readouterr().err
+
+
 def test_anim_pose_at_rejects_unknown_space():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--space", "world"])

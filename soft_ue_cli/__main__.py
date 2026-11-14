@@ -3045,7 +3045,11 @@ def cmd_anim_pose_at(args: argparse.Namespace) -> None:
         arguments["slot"] = args.slot
     if args.blend is not None:
         # The CLI parses a comma string; MCP passes a native list of numbers.
-        arguments["blend"] = [float(value) for value in args.blend]
+        try:
+            arguments["blend"] = [float(value) for value in args.blend]
+        except (TypeError, ValueError):
+            print(f"error: blend values must be numbers, got {args.blend!r}", file=sys.stderr)
+            sys.exit(1)
     _print_json(_run_tool("anim-pose-at", arguments))
 
 

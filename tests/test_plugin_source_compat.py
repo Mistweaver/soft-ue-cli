@@ -649,3 +649,40 @@ def test_capture_scene_cuts_between_angles_rejects_ambiguous_labels_and_isolates
     assert "Actor->GetAttachedActors(IsolatedActors, false, true);" in tool
     assert "Capture->ShowOnlyActors.Add(Shown);" in tool
     assert 'SetArrayField(TEXT("isolated_actors")' in tool
+
+
+def test_anim_pose_at_counts_montage_frames_including_the_last_key():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeAnimSampleTime.h")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeAnimSampleTimeSpec.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # UAnimSequenceBase::GetNumberOfSampledKeys counts frame intervals, not keys, for montages, so
+    # the last frame would be out of range. Only UAnimSequence's override counts keys.
+    assert "NumKeysForLength" in header
+    assert "NumKeysForLength(" in spec
+    assert "SoftUE::AnimSampleTime::NumKeysForLength(" in tool_source
+
+
+def test_anim_pose_at_times_blendspace_samples_like_the_engine():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # GetSamplePlayLength honors bUseSingleFrameForBlending, as UBlendSpace::ResetBlendSamples does.
+    assert "GetSamplePlayLength()" in tool_source
+    assert "SampleAnimation->GetPlayLength()" not in tool_source
+
+
+def test_anim_pose_at_rejects_malformed_frame_and_blend_values():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # A fractional frame or a non-number blend item is an error, not silently rounded or dropped.
+    assert "frame must be a whole number" in tool_source
+    assert "blend values must be numbers" in tool_source
+    assert "RoundToInt32" not in tool_source
+
+
+def test_anim_pose_at_prefixes_every_error_and_warns_on_additive_composites():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "return FBridgeToolResult::Error(Error);" not in tool_source
+    # Only additive AnimSequences are rebuilt onto a base pose; anything else additive says so.
+    assert "is additive but not an AnimSequence" in tool_source

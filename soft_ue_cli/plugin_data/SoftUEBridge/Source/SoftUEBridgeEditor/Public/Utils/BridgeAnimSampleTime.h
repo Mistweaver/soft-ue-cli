@@ -27,6 +27,13 @@ struct SOFTUEBRIDGEEDITOR_API FBridgeAnimSampleTime
 namespace SoftUE::AnimSampleTime
 {
 	/**
+	 * Keys in PlayLength seconds at FrameRate, counting both ends: 1 second at 30 fps is 31 keys.
+	 * UAnimSequence reports this itself; the UAnimSequenceBase default (used by montages) counts
+	 * intervals instead, one fewer.
+	 */
+	SOFTUEBRIDGEEDITOR_API int32 NumKeysForLength(const FFrameRate& FrameRate, double PlayLength);
+
+	/**
 	 * Resolves exactly one of Frame or Time into a time on Timeline. A frame must be 0 to NumKeys - 1
 	 * and is converted with the frame rate. A time must be 0 to PlayLength; a time between keys is
 	 * kept, and the sampler interpolates. A timeline without frames accepts only a time.

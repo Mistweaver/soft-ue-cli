@@ -44,14 +44,22 @@ FBridgeToolResult PoseAtError(const FString& Message)
 	return FBridgeToolResult::Error(FString::Printf(TEXT("%s: %s"), PoseAtToolName, *Message));
 }
 
-TOptional<int32> PoseAtOptionalInt(const TSharedPtr<FJsonObject>& Arguments, const TCHAR* Field)
+/** Reads frame as a whole number. Unset when the field is missing; a fractional value is an error. */
+bool PoseAtOptionalFrame(const TSharedPtr<FJsonObject>& Arguments, TOptional<int32>& OutFrame, FString& OutError)
 {
 	double Value = 0.0;
-	if (Arguments.IsValid() && Arguments->TryGetNumberField(Field, Value))
+	if (!Arguments.IsValid() || !Arguments->TryGetNumberField(TEXT("frame"), Value))
 	{
-		return FMath::RoundToInt32(Value);
+		OutFrame.Reset();
+		return true;
 	}
-	return {};
+	if (Value != FMath::FloorToDouble(Value) || FMath::Abs(Value) > static_cast<double>(MAX_int32))
+	{
+		OutError = FString::Printf(TEXT("frame must be a whole number, got %g."), Value);
+		return false;
+	}
+	OutFrame = static_cast<int32>(Value);
+	return true;
 }
 
 TOptional<double> PoseAtOptionalNumber(const TSharedPtr<FJsonObject>& Arguments, const TCHAR* Field)
@@ -64,24 +72,29 @@ TOptional<double> PoseAtOptionalNumber(const TSharedPtr<FJsonObject>& Arguments,
 	return {};
 }
 
-/** Reads blend as a JSON array of numbers. Unset when the field is missing. */
-TOptional<TArray<double>> PoseAtOptionalNumberArray(const TSharedPtr<FJsonObject>& Arguments, const TCHAR* Field)
+/** Reads blend as a JSON array of numbers. Unset when the field is missing; any other item is an error. */
+bool PoseAtOptionalBlend(const TSharedPtr<FJsonObject>& Arguments, TOptional<TArray<double>>& OutBlend, FString& OutError)
 {
+	OutBlend.Reset();
 	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
-	if (!Arguments.IsValid() || !Arguments->TryGetArrayField(Field, Values) || !Values)
+	if (!Arguments.IsValid() || !Arguments->TryGetArrayField(TEXT("blend"), Values) || !Values)
 	{
-		return {};
+		return true;
 	}
 	TArray<double> Numbers;
 	for (const TSharedPtr<FJsonValue>& Value : *Values)
 	{
 		double Number = 0.0;
-		if (Value.IsValid() && Value->Type == EJson::Number && Value->TryGetNumber(Number))
+		// TryGetNumber also parses strings, so check the type: only numbers are blend input.
+		if (!Value.IsValid() || Value->Type != EJson::Number || !Value->TryGetNumber(Number))
 		{
-			Numbers.Add(Number);
+			OutError = TEXT("blend values must be numbers, such as [150] or [90, 150].");
+			return false;
 		}
+		Numbers.Add(Number);
 	}
-	return Numbers;
+	OutBlend = MoveTemp(Numbers);
+	return true;
 }
 
 TArray<TSharedPtr<FJsonValue>> PoseAtStringsToJson(const TArray<FString>& Values)
@@ -203,9 +216,12 @@ bool PoseAtReadSpace(const FString& RawSpace, FString& OutSpace, FString& OutErr
 FBridgeAnimTimeline PoseAtSequenceTimeline(const UAnimSequenceBase& Animation)
 {
 	FBridgeAnimTimeline Timeline;
-	Timeline.NumKeys = Animation.GetNumberOfSampledKeys();
 	Timeline.PlayLength = Animation.GetPlayLength();
 	Timeline.FrameRate = Animation.GetSamplingFrameRate();
+	// UAnimSequence counts its keys; the UAnimSequenceBase default (montages) counts intervals, one fewer.
+	Timeline.NumKeys = Animation.IsA<UAnimSequence>()
+		? Animation.GetNumberOfSampledKeys()
+		: SoftUE::AnimSampleTime::NumKeysForLength(Timeline.FrameRate, Timeline.PlayLength);
 	return Timeline;
 }
 
@@ -326,8 +342,10 @@ bool PoseAtResolveBlendSpace(const UBlendSpace& BlendSpace, const FPoseAtRequest
 	TArray<TSharedPtr<FJsonValue>> SamplesJson;
 	for (FBlendSampleData& SampleData : Out.BlendSamples)
 	{
-		const UAnimSequence* SampleAnimation = BlendSpace.GetBlendSample(SampleData.SampleDataIndex).Animation;
-		const double SampleLength = SampleAnimation ? SampleAnimation->GetPlayLength() : 0.0;
+		const FBlendSample& BlendSample = BlendSpace.GetBlendSample(SampleData.SampleDataIndex);
+		const UAnimSequence* SampleAnimation = BlendSample.Animation;
+		// One frame's length for a sample marked bUseSingleFrameForBlending, as UBlendSpace::ResetBlendSamples does.
+		const double SampleLength = BlendSample.GetSamplePlayLength();
 		SampleData.Time = static_cast<float>(NormalizedTime * SampleLength);
 
 		TSharedPtr<FJsonObject> SampleJson = MakeShared<FJsonObject>();
@@ -385,15 +403,17 @@ bool PoseAtResolve(const UAnimationAsset& Asset, const FPoseAtRequest& Request, 
 
 // ---- Evaluation ----
 
-/** One animation at one time. An additive clip's offsets are accumulated onto its base pose. */
+/**
+ * One animation at one time. An additive AnimSequence's offsets are accumulated onto its base pose;
+ * any other additive asset (an AnimComposite) names no base, so its offsets go onto the reference pose.
+ */
 void PoseAtEvaluateAnimation(const UAnimSequenceBase& Animation, double Time, FBoneContainer& RequiredBones, FAnimationPoseData& PoseData)
 {
 	const bool bExtractRootMotion = false;
 	FAnimExtractContext ExtractContext(Time, bExtractRootMotion);
 	FCompactPose& CompactPose = PoseData.GetPose();
 
-	const UAnimSequence* AdditiveSequence = Animation.IsValidAdditive() ? Cast<UAnimSequence>(&Animation) : nullptr;
-	if (!AdditiveSequence)
+	if (!Animation.IsValidAdditive())
 	{
 		CompactPose.ResetToRefPose();
 		Animation.GetAnimationPose(PoseData, ExtractContext);
@@ -409,9 +429,16 @@ void PoseAtEvaluateAnimation(const UAnimSequenceBase& Animation, double Time, FB
 	BaseCurve.InitFrom(RequiredBones);
 	UE::Anim::FStackAttributeContainer BaseAttributes;
 	FAnimationPoseData BasePoseData(BasePose, BaseCurve, BaseAttributes);
-	AdditiveSequence->GetAdditiveBasePose(BasePoseData, ExtractContext);
+	if (const UAnimSequence* AdditiveSequence = Cast<UAnimSequence>(&Animation))
+	{
+		AdditiveSequence->GetAdditiveBasePose(BasePoseData, ExtractContext);
+	}
+	else
+	{
+		BasePose.ResetToRefPose();
+	}
 
-	FAnimationRuntime::AccumulateAdditivePose(BasePoseData, PoseData, 1.f, AdditiveSequence->GetAdditiveAnimType());
+	FAnimationRuntime::AccumulateAdditivePose(BasePoseData, PoseData, 1.f, Animation.GetAdditiveAnimType());
 	BasePose.NormalizeRotations();
 	CompactPose.CopyBonesFrom(BasePose);
 }
@@ -614,7 +641,7 @@ FBridgeToolResult UAnimPoseAtTool::Execute(
 	UObject* Object = FBridgeAssetModifier::LoadAssetByPath(AssetPath, Error);
 	if (!Object)
 	{
-		return FBridgeToolResult::Error(Error);
+		return PoseAtError(Error);
 	}
 	const UAnimationAsset* Asset = Cast<UAnimationAsset>(Object);
 	if (!Asset)
@@ -624,10 +651,12 @@ FBridgeToolResult UAnimPoseAtTool::Execute(
 	}
 
 	FPoseAtRequest Request;
-	Request.Frame = PoseAtOptionalInt(Arguments, TEXT("frame"));
+	if (!PoseAtOptionalFrame(Arguments, Request.Frame, Error) || !PoseAtOptionalBlend(Arguments, Request.Blend, Error))
+	{
+		return PoseAtError(Error);
+	}
 	Request.Time = PoseAtOptionalNumber(Arguments, TEXT("time"));
 	Request.Slot = GetStringArgOrDefault(Arguments, TEXT("slot"), TEXT(""));
-	Request.Blend = PoseAtOptionalNumberArray(Arguments, TEXT("blend"));
 
 	FString Space;
 	if (!PoseAtReadSpace(GetStringArgOrDefault(Arguments, TEXT("space"), TEXT("component")), Space, Error))
@@ -679,6 +708,13 @@ FBridgeToolResult UAnimPoseAtTool::Execute(
 	{
 		Result->SetObjectField(TEXT("additive"), PoseAtAdditiveToJson(*SampledSequence));
 		Resolved.Warnings.Add(TEXT("This is an additive animation. Its offsets were applied onto its base pose (see additive) to give a full pose."));
+	}
+	else if (Resolved.Animation && Resolved.Animation->IsValidAdditive())
+	{
+		// Only an AnimSequence names a base pose, so other additive assets report raw offsets.
+		Resolved.Warnings.Add(FString::Printf(
+			TEXT("%s is additive but not an AnimSequence, so its offsets were applied onto the reference pose, not a base pose."),
+			*Resolved.Animation->GetPathName()));
 	}
 	Result->SetArrayField(TEXT("warnings"), PoseAtStringsToJson(Resolved.Warnings));
 	return FBridgeToolResult::Json(Result);
