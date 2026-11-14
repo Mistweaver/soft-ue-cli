@@ -3581,6 +3581,18 @@ def test_removed_flat_commands_are_no_longer_supported(argv):
         build_parser().parse_args(argv)
 
 
+def test_canonical_commands_keep_required_mutually_exclusive_groups():
+    # Canonical commands copy the flat parser; a required either/or group must survive the copy.
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["mutable", "graph", "create-from-spec", "/Game/CO_Hero"])
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([
+            "mutable", "graph", "create-from-spec", "/Game/CO_Hero", "--spec", "{}", "--spec-file", "s.json",
+        ])
+    args = build_parser().parse_args(["mutable", "graph", "create-from-spec", "/Game/CO_Hero", "--spec", "{}"])
+    assert args.spec == "{}"
+
+
 def test_canonical_command_family_normalization_preserves_root_options():
     args = build_parser().parse_args([
         "--server",
@@ -4510,6 +4522,141 @@ def test_anim_montage_inspect_routes_to_bridge_tool():
             "include": "notifies,sections,slots",
         },
     )
+
+
+def test_anim_pose_at_routes_time_to_bridge_tool():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--time", "0.5"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with("anim-pose-at", {"asset_path": "/Game/Anim/AS_Idle", "time": 0.5})
+
+
+def test_anim_pose_at_routes_frame_as_integer():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "12"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    sent = mock_run.call_args.args[1]
+    assert sent == {"asset_path": "/Game/Anim/AS_Idle", "frame": 12}
+    assert isinstance(sent["frame"], int)
+
+
+def test_anim_pose_at_routes_bones_space_and_mesh():
+    args = build_parser().parse_args([
+        "anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0",
+        "--bones", "pelvis, hand_l,,",
+        "--space", "local",
+        "--mesh", "/Game/Characters/SKM_Hero",
+    ])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    mock_run.assert_called_once_with(
+        "anim-pose-at",
+        {
+            "asset_path": "/Game/Anim/AS_Idle",
+            "frame": 0,
+            "bones": ["pelvis", "hand_l"],
+            "space": "local",
+            "mesh_path": "/Game/Characters/SKM_Hero",
+        },
+    )
+
+
+def test_anim_pose_at_accepts_native_bone_list():
+    # MCP passes bones as a JSON array, which arrives as a list instead of a comma string.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+    args.bones = ["pelvis", " hand_l ", ""]
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+
+    assert mock_run.call_args.args[1]["bones"] == ["pelvis", "hand_l"]
+
+
+def test_anim_pose_at_sends_compressed_only_when_asked():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--compressed"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["compressed"] is True
+
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert "compressed" not in mock_run.call_args.args[1]
+
+
+def test_anim_pose_at_routes_montage_slot():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AM_Attack", "--time", "0.2", "--slot", "UpperBody"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1] == {"asset_path": "/Game/Anim/AM_Attack", "time": 0.2, "slot": "UpperBody"}
+
+
+def test_anim_pose_at_parses_blend_input_as_numbers():
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0", "--blend", "0.5, 90"])
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["blend"] == [0.5, 90.0]
+
+
+def test_anim_pose_at_accepts_native_blend_list():
+    # MCP passes blend as a JSON array of numbers.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0"])
+    args.blend = [120, 0.25]
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        args.func(args)
+    assert mock_run.call_args.args[1]["blend"] == [120.0, 0.25]
+
+
+def test_anim_pose_at_rejects_non_numeric_blend():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0", "--blend", "fast,90"])
+
+
+def test_anim_pose_at_rejects_non_numeric_native_blend_list(capsys):
+    # MCP skips argparse, so a list item that is not a number is reported, not raised as ValueError.
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/BS_Move", "--time", "0"])
+    args.blend = ["fast", 90]
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"success": True}) as mock_run:
+        with pytest.raises(SystemExit):
+            args.func(args)
+    mock_run.assert_not_called()
+    assert "blend" in capsys.readouterr().err
+
+
+def test_anim_pose_at_rejects_unknown_space():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0", "--space", "world"])
+
+
+def test_anim_pose_at_prints_bridge_response(capsys):
+    response = {
+        "success": True,
+        "asset_type": "AnimSequence",
+        "frame_count": 31,
+        "bones": [{"name": "pelvis", "location": [0.0, 0.0, 90.0], "quat": [0.0, 0.0, 0.0, 1.0]}],
+    }
+    args = build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "0"])
+
+    with patch("soft_ue_cli.__main__._run_tool", return_value=response):
+        args.func(args)
+
+    assert json.loads(capsys.readouterr().out) == response
+
+
+def test_anim_pose_at_requires_frame_or_time():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle"])
+
+
+def test_anim_pose_at_rejects_frame_and_time_together():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["anim", "pose-at", "/Game/Anim/AS_Idle", "--frame", "3", "--time", "0.5"])
 
 
 def test_anim_state_machine_inspect_routes_to_bridge_tool():

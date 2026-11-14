@@ -337,6 +337,7 @@ Canonical commands are grouped under command families such as `blueprint`, `asse
 | `anim state-machine add` | Add an initialized AnimBlueprint state machine with optional initial state |
 | `anim state add` | Add a state and state content graph to an AnimBlueprint state machine |
 | `anim transition add` | Add a transition and transition rule graph between AnimBlueprint states |
+| `anim pose-at` | Sample an AnimSequence, AnimMontage, or BlendSpace at a frame or time and report component- or local-space bone transforms without PIE |
 | `anim state-machine inspect` | Report AnimBlueprint state machines, states, conduits, aliases, the entry state, and transitions with blend settings and rule summaries |
 | `compile-material` | Compile a Material, MaterialInstance, or MaterialFunction |
 | `asset save` | Save a modified asset to disk (with optional `--checkout` for source control) |

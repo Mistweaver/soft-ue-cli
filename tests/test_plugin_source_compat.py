@@ -332,6 +332,131 @@ def test_asset_query_physics_is_registered_and_avoids_version_specific_elements(
     assert "PhysQuerySchemaProperty" in tool_source
 
 
+def test_asset_query_physics_uses_shared_bone_pose_helpers():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
+
+    # Bone filtering, component-space composition, and transform JSON are shared with anim pose-at.
+    assert '#include "Utils/BridgeBonePose.h"' in tool_source
+    for duplicate in (
+        "PhysQueryComponentSpacePose",
+        "PhysQuerySetTransform",
+        "PhysQueryVector",
+        "PhysQueryRotator",
+        "PhysQueryReadBones",
+    ):
+        assert duplicate not in tool_source
+
+
+def test_bridge_bone_pose_helpers_are_engine_free_and_covered_by_a_spec():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeBonePose.h")
+    source = _read("SoftUEBridgeEditor/Private/Utils/BridgeBonePose.cpp")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeBonePoseSpec.cpp")
+
+    assert "namespace SoftUE::BonePose" in header
+    assert "SOFTUEBRIDGEEDITOR_API" in header
+    for function in ("ComponentSpaceFromLocal", "SetTransformFields", "ParseBoneFilter", "VectorToJson"):
+        assert function in header
+        assert function in spec
+
+    # Plain math and JSON only: no asset loading, so the spec runs without content.
+    assert "LoadAssetByPath" not in source
+    assert "SoftUEBridge.Animation.BonePose" in spec
+
+
+def test_anim_sample_time_rules_are_pure_and_covered_by_a_spec():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeAnimSampleTime.h")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeAnimSampleTimeSpec.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "namespace SoftUE::AnimSampleTime" in header
+    assert "Resolve" in header and "Resolve(" in spec
+    assert "SoftUEBridge.Animation.SampleTime" in spec
+    assert "SoftUE::AnimSampleTime::Resolve" in tool_source
+
+
+def test_anim_pose_at_filters_bones_supports_local_space_and_checks_mesh_skeleton():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "SoftUE::BonePose::ParseBoneFilter(Arguments)" in tool_source
+    assert "missing_bones" in tool_source
+    # local reports the sampled parent-relative transforms; component composes them.
+    assert 'TEXT("local")' in tool_source and 'TEXT("component")' in tool_source
+    # A mesh on an unrelated skeleton would sample garbage, so it is rejected the way the editor's
+    # preview-mesh picker does.
+    assert "IsCompatibleForEditor(" in tool_source
+    assert 'TEXT("mesh_path")' in tool_source
+
+
+def test_anim_pose_at_applies_additive_offsets_onto_their_base_pose():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # An additive clip samples offsets, not a pose. They are accumulated onto the clip's base pose
+    # the way UAnimPoseExtensions does with bRetrieveAdditiveAsFullPose.
+    assert "IsValidAdditive()" in tool_source
+    assert "ResetToAdditiveIdentity()" in tool_source
+    assert "GetAdditiveBasePose(" in tool_source
+    assert "FAnimationRuntime::AccumulateAdditivePose(" in tool_source
+    assert "NormalizeRotations()" in tool_source
+
+    # The response says the pose is a base plus offsets and names the base.
+    assert 'TEXT("additive")' in tool_source
+    assert 'TEXT("base_type")' in tool_source
+    assert 'TEXT("warnings")' in tool_source
+
+
+def test_anim_pose_at_reads_raw_keys_unless_compressed_is_requested():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # Raw keys by default (what an authoring script just wrote); compressed is what the game plays.
+    assert "SetUseRAWData(bUseRawData)" in tool_source
+    assert 'TEXT("compressed")' in tool_source
+    assert 'bCompressed ? TEXT("compressed") : TEXT("raw")' in tool_source
+
+
+def test_anim_pose_at_resolves_montages_through_their_slot_segments():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # Montage time maps to a segment's animation and its local time, including play rate and looping.
+    assert "AnimTrack.GetSegmentAtTime(" in tool_source
+    assert "GetAnimationData(" in tool_source
+    assert 'TEXT("slot")' in tool_source and 'TEXT("segment_anim_path")' in tool_source
+    # An unknown slot lists the montage's slots.
+    assert "Slots: %s." in tool_source
+
+
+def test_anim_pose_at_blends_blendspace_samples_by_normalized_time():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "GetSamplesFromBlendInput(" in tool_source
+    assert "GetAnimationLengthFromSampleData(" in tool_source
+    # The context overload exists in 5.7 and 5.8; the overload without a context was removed in 5.8.
+    assert "GetAnimationPose(Samples, ExtractContext, PoseData)" in tool_source
+    assert "IsA<UBlendSpace1D>()" in tool_source
+    # BlendSpaces have no fixed frames, and aim offsets are rejected rather than sampled wrongly.
+    assert "Timeline.bHasFrames = false" in tool_source
+    assert "IsValidAdditive()" in tool_source and "aim offset" in tool_source
+    assert "sync markers are not used" in tool_source
+
+
+def test_anim_pose_at_is_registered_and_uses_shared_helpers():
+    module_source = _read("SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert '#include "Tools/Animation/AnimPoseAtTool.h"' in module_source
+    assert "RegisterToolClass<UAnimPoseAtTool>()" in module_source
+
+    assert '#include "Utils/BridgeBonePose.h"' in tool_source
+    assert "SoftUE::BonePose::SetTransformFields" in tool_source
+    assert "SoftUE::BonePose::ComponentSpaceFromLocal" in tool_source
+
+    # Root motion stays in the root bone instead of being extracted.
+    assert "bExtractRootMotion" in tool_source or "FAnimExtractContext(" in tool_source
+
+    # Unity builds share anonymous namespaces, so helpers carry a file-specific prefix.
+    assert "FBridgeSchemaProperty MakeSchemaProperty(" not in tool_source
+    assert "PoseAtSchemaProperty" in tool_source
+
+
 def test_asset_query_physics_constraint_frames_follow_space_and_mesh_is_body_space_noop():
     tool_source = _read("SoftUEBridgeEditor/Private/Tools/Asset/PhysicsAssetQueryTool.cpp")
 
@@ -524,3 +649,40 @@ def test_capture_scene_cuts_between_angles_rejects_ambiguous_labels_and_isolates
     assert "Actor->GetAttachedActors(IsolatedActors, false, true);" in tool
     assert "Capture->ShowOnlyActors.Add(Shown);" in tool
     assert 'SetArrayField(TEXT("isolated_actors")' in tool
+
+
+def test_anim_pose_at_counts_montage_frames_including_the_last_key():
+    header = _read("SoftUEBridgeEditor/Public/Utils/BridgeAnimSampleTime.h")
+    spec = _read("SoftUEBridgeEditor/Private/Utils/BridgeAnimSampleTimeSpec.cpp")
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # UAnimSequenceBase::GetNumberOfSampledKeys counts frame intervals, not keys, for montages, so
+    # the last frame would be out of range. Only UAnimSequence's override counts keys.
+    assert "NumKeysForLength" in header
+    assert "NumKeysForLength(" in spec
+    assert "SoftUE::AnimSampleTime::NumKeysForLength(" in tool_source
+
+
+def test_anim_pose_at_times_blendspace_samples_like_the_engine():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # GetSamplePlayLength honors bUseSingleFrameForBlending, as UBlendSpace::ResetBlendSamples does.
+    assert "GetSamplePlayLength()" in tool_source
+    assert "SampleAnimation->GetPlayLength()" not in tool_source
+
+
+def test_anim_pose_at_rejects_malformed_frame_and_blend_values():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    # A fractional frame or a non-number blend item is an error, not silently rounded or dropped.
+    assert "frame must be a whole number" in tool_source
+    assert "blend values must be numbers" in tool_source
+    assert "RoundToInt32" not in tool_source
+
+
+def test_anim_pose_at_prefixes_every_error_and_warns_on_additive_composites():
+    tool_source = _read("SoftUEBridgeEditor/Private/Tools/Animation/AnimPoseAtTool.cpp")
+
+    assert "return FBridgeToolResult::Error(Error);" not in tool_source
+    # Only additive AnimSequences are rebuilt onto a base pose; anything else additive says so.
+    assert "is additive but not an AnimSequence" in tool_source

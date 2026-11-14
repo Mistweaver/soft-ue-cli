@@ -705,6 +705,25 @@ def test_asset_query_physics_schema_uses_native_json_types():
         assert params.get("required", []) == ["asset_path"]
 
 
+def test_anim_pose_at_schema_uses_native_json_types():
+    tools = extract_tools()
+
+    for name in ("anim pose-at", "anim-pose-at"):
+        params = next(t for t in tools if t["name"] == name)["parameters"]
+        assert params["properties"]["asset_path"]["type"] == "string"
+        assert params["properties"]["frame"]["type"] == "integer", name
+        assert params["properties"]["time"]["type"] == "number", name
+        assert params["properties"]["bones"]["type"] == "array", name
+        assert params["properties"]["space"]["enum"] == ["component", "local"], name
+        assert params["properties"]["mesh_path"]["type"] == "string", name
+        assert params["properties"]["compressed"]["type"] == "boolean", name
+        assert params["properties"]["slot"]["type"] == "string", name
+        assert params["properties"]["blend"]["type"] == "array", name
+        assert params["properties"]["blend"]["items"]["type"] == "number", name
+        # frame and time are either/or; JSON Schema here cannot say that, so neither is required.
+        assert params.get("required", []) == ["asset_path"]
+
+
 def test_capture_scene_schema_uses_native_json_types():
     tool = next(t for t in extract_tools() if t["name"] == "capture scene")
     params = tool["parameters"]

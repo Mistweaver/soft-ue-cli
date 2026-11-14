@@ -1179,6 +1179,15 @@ _EXPLICIT_ENTRIES: dict[str, dict[str, Any]] = {
         requires_editor=True,
         examples=["soft-ue-cli anim montage inspect /Game/Animation/AM_Attack --include notifies,sections,slots"],
     ),
+    "anim pose-at": _entry(
+        "anim pose-at",
+        "Sample an AnimSequence, AnimMontage, or BlendSpace at a frame or time and report bone transforms, without PIE.",
+        layer="bridge",
+        category="animation",
+        requires_bridge=True,
+        requires_editor=True,
+        examples=["soft-ue-cli anim pose-at /Game/Animation/AS_Idle --frame 0 --bones pelvis,hand_l --space component"],
+    ),
     "anim pose-search": _entry(
         "anim pose-search",
         "Canonical PoseSearch schema, database, and skeleton migration family.",

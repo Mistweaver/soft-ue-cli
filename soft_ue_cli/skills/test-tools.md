@@ -25,6 +25,7 @@ When a new CLI tool, MCP-exposed tool, or new inspect/diff section is added, ext
 - UE running with SoftUEBridge enabled and reachable
 - Optional AnimBlueprint smoke coverage: set `SOFT_UE_TEST_ANIM_BP=/Game/.../ABP_Test`
 - Optional PhysicsAsset smoke coverage: set `SOFT_UE_TEST_PHYSICS_ASSET=/Game/.../PA_Test` and `SOFT_UE_TEST_PHYSICS_BONE` to a bone that has a body. Component-space coverage needs the PhysicsAsset to have a preview mesh.
+- Optional `anim pose-at` coverage: set `SOFT_UE_TEST_ANIM_SEQUENCE` to an AnimSequence, and optionally `SOFT_UE_TEST_ADDITIVE_ANIM` to an additive AnimSequence, `SOFT_UE_TEST_ANIM_MONTAGE` to an AnimMontage, and `SOFT_UE_TEST_BLENDSPACE_1D` to a 1D BlendSpace.
 - Optional merged-cloth weight-map smoke: set `SOFT_UE_TEST_CLOTH_MESH`, `SOFT_UE_TEST_CLOTH_ASSET_NAME`, and at least three comma-separated `SOFT_UE_TEST_CLOTH_SECTION_INDICES` values.
 
 ## Usage
@@ -117,6 +118,7 @@ class MCPClient:
         "anim-montage-inspect": "anim montage inspect",
         "anim-state-machine-inspect": "anim state-machine inspect",
         "anim-montage-set-slot-animation": "anim montage set-slot-animation",
+        "anim-pose-at": "anim pose-at",
         "pose-search-schema-inspect": "anim pose-search inspect",
         "pose-search-schema-remap": "anim pose-search remap",
         "pose-search-database-repoint": "anim pose-search database-repoint",
@@ -294,6 +296,18 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             result = None
             passed = False
             error = str(exc)[:300]
+        return _record(name, tool, args, passed, int((time.time() - t0) * 1000), error)
+
+    def run_test_error(name, tool, args, expected_text, timeout=None) -> dict:
+        """Passes when the tool fails with an error message containing expected_text."""
+        t0 = time.time()
+        try:
+            result = caller(tool, args, timeout)
+            passed = False
+            error = f"expected an error containing {expected_text!r}, got: {json.dumps(result)[:200]}"
+        except Exception as exc:
+            passed = expected_text in str(exc)
+            error = None if passed else f"wrong error: {str(exc)[:250]}"
         return _record(name, tool, args, passed, int((time.time() - t0) * 1000), error)
 
     def run_cli(name, *args, check_stdout=None, timeout=30) -> dict:
@@ -1422,6 +1436,8 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
             check_stdout=lambda s: "anim pose-search database-repoint" in s and "--anim-map" in s and "--schema" in s)
     run_cli("asset repoint-references help", "asset", "repoint-references", "--help",
             check_stdout=lambda s: "asset repoint-references" in s and "--map" in s)
+    run_cli("anim pose-at help", "anim", "pose-at", "--help",
+            check_stdout=lambda s: "anim pose-at" in s and "--frame" in s and "--time" in s)
     run_cli("asset query-physics help", "asset", "query-physics", "--help",
             check_stdout=lambda s: "asset query-physics" in s and "--bones" in s and "--space" in s)
     run_cli("asset skeletal-socket create help", "asset", "skeletal-socket", "create", "--help",
@@ -1789,6 +1805,88 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
         _record("asset-repoint-references smoke", "asset-repoint-references", {},
                 True, 0, "skipped: set SOFT_UE_TEST_ASSET_REPOINT_ASSETS and SOFT_UE_TEST_ASSET_REPOINT_MAP")
 
+    _pose_anim = os.environ.get("SOFT_UE_TEST_ANIM_SEQUENCE", "").strip()
+    if _pose_anim:
+        def _pose_matches(r):
+            bones = r.get("bones") or []
+            return (
+                r.get("success") is True
+                and r.get("asset_type") == "AnimSequence"
+                and r.get("frame") == 0
+                and r.get("frame_count", 0) > 0
+                and r.get("play_length", -1) >= 0
+                and r.get("frame_rate", 0) > 0
+                and r.get("evaluation") == "raw"
+                and len(bones) == r.get("bone_count")
+                and all(len(b.get("location", [])) == 3 and len(b.get("quat", [])) == 4 for b in bones)
+            )
+
+        run_test("anim-pose-at frame 0", "anim-pose-at", {"asset_path": _pose_anim, "frame": 0}, _pose_matches)
+        run_test("anim-pose-at time 0", "anim-pose-at", {"asset_path": _pose_anim, "time": 0.0},
+                 lambda r: r.get("success") is True and r.get("frame") is None)
+        # bones is a native array: the MCP schema must not stringify it.
+        _pose_missing = f"{LABEL_PFX}_no_such_bone"
+        # A filter naming only an unknown bone works on any skeleton: no bones, one missing name.
+        run_test("anim-pose-at bones filter", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "bones": [_pose_missing]},
+                 lambda r: r.get("success") is True
+                 and r.get("bones") == []
+                 and r.get("missing_bones") == [_pose_missing])
+        run_test("anim-pose-at local space", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "space": "local"},
+                 lambda r: r.get("success") is True and r.get("space") == "local"
+                 and all("parent" in b for b in r.get("bones", [])))
+        run_test("anim-pose-at compressed", "anim-pose-at",
+                 {"asset_path": _pose_anim, "frame": 0, "compressed": True},
+                 lambda r: r.get("success") is True and r.get("evaluation") == "compressed")
+        run_test_error("anim-pose-at unknown space", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 0, "space": "world"}, "space must be")
+        run_test_error("anim-pose-at frame out of range", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 1000000}, "is outside 0 to")
+        run_test_error("anim-pose-at frame and time together", "anim-pose-at",
+                       {"asset_path": _pose_anim, "frame": 0, "time": 0.0}, "exactly one of frame or time")
+    else:
+        _record("anim-pose-at smoke", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_ANIM_SEQUENCE")
+
+    _pose_montage = os.environ.get("SOFT_UE_TEST_ANIM_MONTAGE", "").strip()
+    if _pose_montage:
+        run_test("anim-pose-at montage", "anim-pose-at", {"asset_path": _pose_montage, "time": 0.0},
+                 lambda r: r.get("success") is True and r.get("asset_type") == "AnimMontage"
+                 and r.get("slot") and r.get("segment_anim_path") and len(r.get("bones", [])) > 0)
+        run_test_error("anim-pose-at montage unknown slot", "anim-pose-at",
+                       {"asset_path": _pose_montage, "time": 0.0, "slot": f"{LABEL_PFX}_no_slot"}, "Slots:")
+    else:
+        _record("anim-pose-at montage", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_ANIM_MONTAGE")
+
+    _pose_blendspace = os.environ.get("SOFT_UE_TEST_BLENDSPACE_1D", "").strip()
+    if _pose_blendspace:
+        # blend is a native number array: the MCP schema must not stringify it.
+        run_test("anim-pose-at blendspace", "anim-pose-at",
+                 {"asset_path": _pose_blendspace, "time": 0.0, "blend": [0.0]},
+                 lambda r: r.get("success") is True and r.get("frame_count") is None
+                 and r.get("blend_input") == [0.0] and len(r.get("samples", [])) > 0
+                 and abs(sum(s.get("weight", 0) for s in r["samples"]) - 1.0) < 0.01)
+        run_test_error("anim-pose-at blendspace frame", "anim-pose-at",
+                       {"asset_path": _pose_blendspace, "frame": 0, "blend": [0.0]}, "no fixed frames")
+        run_test_error("anim-pose-at blendspace without blend", "anim-pose-at",
+                       {"asset_path": _pose_blendspace, "time": 0.0}, "needs blend")
+    else:
+        _record("anim-pose-at blendspace", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_BLENDSPACE_1D")
+
+    _additive_anim = os.environ.get("SOFT_UE_TEST_ADDITIVE_ANIM", "").strip()
+    if _additive_anim:
+        run_test("anim-pose-at additive", "anim-pose-at", {"asset_path": _additive_anim, "frame": 0},
+                 lambda r: r.get("success") is True
+                 and isinstance(r.get("additive"), dict)
+                 and r["additive"].get("base_type")
+                 and any("additive" in w for w in r.get("warnings", [])))
+    else:
+        _record("anim-pose-at additive", "anim-pose-at", {},
+                True, 0, "skipped: set SOFT_UE_TEST_ADDITIVE_ANIM")
+
     _physics_asset = os.environ.get("SOFT_UE_TEST_PHYSICS_ASSET", "").strip()
     _physics_bone = os.environ.get("SOFT_UE_TEST_PHYSICS_BONE", "").strip()
     if _physics_asset and _physics_bone:
@@ -1803,6 +1901,7 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
                 and bodies[0].get("bone_name") == _physics_bone
                 and bodies[0].get("shape_count", 0) + bodies[0].get("other_shape_count", 0) > 0
                 and all(len(shape.get("location", [])) == 3 for shape in bodies[0].get("shapes", []))
+                and all(len(shape.get("quat", [])) == 4 for shape in bodies[0].get("shapes", []))
                 and r.get("missing_bones") == [_missing_bone]
                 and isinstance(r.get("constraints"), list)
             )
