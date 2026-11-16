@@ -6,6 +6,8 @@
 #include "Tools/BridgeToolBase.h"
 #include "PieTickTool.generated.h"
 
+struct FBridgeTickOperation;
+
 /**
  * Advance the PIE world by a fixed number of frames at a pinned delta time.
  */
@@ -28,22 +30,9 @@ public:
 		const FBridgeToolContext& Context) override;
 
 private:
-	UWorld* GetPIEWorld() const;
+	bool IsPIERunning() const;
 	bool StartPIEForTick(
 		const FString& MapPath,
-		double OperationStartSeconds,
-		double OperationDeadlineSeconds,
-		int32 RequestedFrames,
-		TSharedPtr<FJsonObject>& OutFailure);
-	bool TickWorldFrames(
-		UWorld* World,
-		int32 Frames,
-		float DeltaSeconds,
-		float TimeoutSeconds,
-		double OperationStartSeconds,
-		double OperationDeadlineSeconds,
-		int32& OutFramesTicked,
-		float& OutWorldTimeBefore,
-		float& OutWorldTimeAfter,
+		const FBridgeTickOperation& Operation,
 		TSharedPtr<FJsonObject>& OutFailure);
 };

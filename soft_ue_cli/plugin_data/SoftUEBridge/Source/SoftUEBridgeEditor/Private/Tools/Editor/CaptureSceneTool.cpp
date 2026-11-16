@@ -418,14 +418,14 @@ FBridgeToolResult UCaptureSceneTool::Execute(
 	{
 		const TArray<FBridgePIEWorld> PIEWorlds = FBridgePIEWorlds::Enumerate();
 		const int32 PIEInstance = GetIntArgOrDefault(Arguments, TEXT("pie_instance"), INDEX_NONE);
-		const FBridgePIEWorld* Selected = bHasPIEInstance
-			? FBridgePIEWorlds::Resolve(PIEWorlds, PIEInstance)
-			: (PIEWorlds.Num() > 0 ? &PIEWorlds[0] : nullptr);
+		FString SelectError;
+		const FBridgePIEWorld* Selected = FBridgePIEWorlds::Select(
+			PIEWorlds,
+			bHasPIEInstance ? TOptional<int32>(PIEInstance) : TOptional<int32>(),
+			SelectError);
 		if (!Selected)
 		{
-			return bHasPIEInstance
-				? Fail(FString::Printf(TEXT("PIE instance %d not found; available PIE instances: %s"), PIEInstance, *FBridgePIEWorlds::AvailableInstanceIds(PIEWorlds)))
-				: Fail(TEXT("no PIE world available; start PIE first"));
+			return Fail(SelectError);
 		}
 		World = Selected->World;
 		SelectedPIEInstance = Selected->PIEInstance;

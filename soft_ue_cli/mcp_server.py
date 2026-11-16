@@ -43,6 +43,14 @@ _PARAM_RENAMES: dict[str, dict[str, str]] = {
     "exec-console-command": {"command_parts": "command"},
 }
 
+# Tools that tick the PIE world inside one request, with the bridge's default
+# wall-clock budget for each. The HTTP timeout is that budget plus a margin.
+_TICK_TOOL_DEFAULT_TIMEOUTS: dict[str, float] = {
+    "pie-tick": 30.0,
+    "pie-record": 120.0,
+}
+_TICK_TOOL_HTTP_TIMEOUT_MARGIN = 60.0
+
 _JSON_TYPE_TO_PY: dict[str, type] = {
     "string": str,
     "boolean": bool,
@@ -177,11 +185,13 @@ def _make_tool_fn(tool_name: str, params: dict | None = None):
                     http_timeout = float(timeout_arg)
                 except (TypeError, ValueError):
                     http_timeout = None
-        elif tool_name == "pie-tick":
+        elif tool_name in _TICK_TOOL_DEFAULT_TIMEOUTS:
+            # The request outlives the tool's own budget so the bridge can report its timeout itself.
+            default_timeout = _TICK_TOOL_DEFAULT_TIMEOUTS[tool_name]
             try:
-                http_timeout = float(arguments.get("timeout", 30.0)) + 60.0
+                http_timeout = float(arguments.get("timeout", default_timeout)) + _TICK_TOOL_HTTP_TIMEOUT_MARGIN
             except (TypeError, ValueError):
-                http_timeout = 90.0
+                http_timeout = default_timeout + _TICK_TOOL_HTTP_TIMEOUT_MARGIN
 
         try:
             result, meta = _client.call_tool_ex(bridge_name, arguments, timeout=http_timeout)

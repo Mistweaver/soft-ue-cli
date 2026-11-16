@@ -39,6 +39,46 @@ const FBridgePIEWorld* FBridgePIEWorlds::Resolve(const TArray<FBridgePIEWorld>& 
 	});
 }
 
+const FBridgePIEWorld* FBridgePIEWorlds::Select(
+	const TArray<FBridgePIEWorld>& Worlds,
+	TOptional<int32> PIEInstance,
+	FString& OutError)
+{
+	if (PIEInstance.IsSet())
+	{
+		const FBridgePIEWorld* Requested = Resolve(Worlds, PIEInstance.GetValue());
+		if (!Requested)
+		{
+			OutError = FString::Printf(
+				TEXT("PIE instance %d not found; available PIE instances: %s"),
+				PIEInstance.GetValue(),
+				*AvailableInstanceIds(Worlds));
+		}
+		return Requested;
+	}
+
+	const FBridgePIEWorld* First = Worlds.FindByPredicate([](const FBridgePIEWorld& Entry) { return Entry.World != nullptr; });
+	if (!First)
+	{
+		OutError = TEXT("no PIE world available; start PIE first");
+	}
+	return First;
+}
+
+TValueOrError<TOptional<int32>, FString> FBridgePIEWorlds::ReadInstanceArgument(const FJsonObject& Arguments)
+{
+	double Requested = 0.0;
+	if (!Arguments.TryGetNumberField(TEXT("pie_instance"), Requested))
+	{
+		return MakeValue(TOptional<int32>());
+	}
+	if (Requested != FMath::FloorToDouble(Requested) || Requested < 0.0 || Requested > MAX_int32)
+	{
+		return MakeError(FString::Printf(TEXT("'pie_instance' must be a non-negative integer (got %g)"), Requested));
+	}
+	return MakeValue(TOptional<int32>(static_cast<int32>(Requested)));
+}
+
 FString FBridgePIEWorlds::AvailableInstanceIds(const TArray<FBridgePIEWorld>& Worlds)
 {
 	TArray<int32> InstanceIds;

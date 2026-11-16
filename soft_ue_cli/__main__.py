@@ -2867,7 +2867,32 @@ def cmd_pie_tick(args: argparse.Namespace) -> None:
         arguments["map"] = args.map
     if args.timeout is not None:
         arguments["timeout"] = args.timeout
+    if getattr(args, "pie_instance", None) is not None:
+        arguments["pie_instance"] = args.pie_instance
     result = _run_tool("pie-tick", arguments, timeout=tool_timeout + 60.0)
+    _print_json(result)
+    if result.get("success") is False:
+        sys.exit(1)
+
+
+_PIE_RECORD_DEFAULT_TIMEOUT_SECONDS = 120.0
+# The HTTP request outlives the tool's own budget so the bridge can report its timeout itself.
+_PIE_RECORD_HTTP_TIMEOUT_MARGIN_SECONDS = 60.0
+
+
+def cmd_pie_record(args: argparse.Namespace) -> None:
+    # The editor resolves relative paths against its own working directory, so send absolute ones.
+    arguments: dict = {"duration": args.duration, "script": str(Path(args.script).resolve())}
+    if args.delta is not None:
+        arguments["delta"] = args.delta
+    if args.output:
+        arguments["output"] = str(Path(args.output).resolve())
+    if args.pie_instance is not None:
+        arguments["pie_instance"] = args.pie_instance
+    if args.timeout is not None:
+        arguments["timeout"] = args.timeout
+    tool_timeout = args.timeout if args.timeout is not None else _PIE_RECORD_DEFAULT_TIMEOUT_SECONDS
+    result = _run_tool("pie-record", arguments, timeout=tool_timeout + _PIE_RECORD_HTTP_TIMEOUT_MARGIN_SECONDS)
     _print_json(result)
     if result.get("success") is False:
         sys.exit(1)
@@ -7784,7 +7809,51 @@ def build_parser(*, include_removed: bool = False) -> argparse.ArgumentParser:
     p_pt.add_argument("--no-auto-start", action="store_true", help="Error out if PIE is not already running")
     p_pt.add_argument("--map", metavar="PATH", help="Map to load when auto-starting PIE")
     p_pt.add_argument("--timeout", type=float, metavar="SEC", help="Timeout for PIE start + ticking (default: 30)")
+    p_pt.add_argument(
+        "--pie-instance",
+        type=int,
+        metavar="ID",
+        help="PIE instance to tick (FWorldContext::PIEInstance); default: the first PIE world",
+    )
     p_pt.set_defaults(func=cmd_pie_tick)
+
+    p_pr = sub.add_parser(
+        "pie-record",
+        help="Run a sampler script after every PIE world tick and write one JSON line per tick.",
+        description=(
+            "Advance the running PIE world at a fixed delta for a duration of simulated time, calling\n"
+            "sample(ctx) from your script after every tick. ctx has frame, world_time, delta_seconds,\n"
+            "and world. Each tick's returned value is written as one JSON line, after a header line.\n"
+            "PIE must already be running. Ticks are driven directly, so editor focus does not matter;\n"
+            "input processing, OpenXR tracking, and rendering do not run during a recording.\n\n"
+            "EXAMPLES:\n"
+            "  soft-ue-cli pie-record --duration 2 --script sample_hands.py\n"
+            "  soft-ue-cli pie-record --duration 1 --delta 0.0111111 --script s.py --output rec.jsonl\n"
+            "  soft-ue-cli pie-record --duration 5 --script s.py --pie-instance 1"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_pr.add_argument("--duration", type=float, required=True, metavar="SEC", help="Simulated seconds to record")
+    p_pr.add_argument(
+        "--script",
+        required=True,
+        metavar="PATH",
+        help="Python file that defines sample(ctx) and returns a JSON-encodable value",
+    )
+    p_pr.add_argument("--delta", type=float, metavar="SEC", help="Pinned delta seconds per tick (default: 1/60)")
+    p_pr.add_argument(
+        "--output",
+        metavar="PATH",
+        help="JSONL file to write (default: <Project>/Saved/SoftUEBridge/pie-record/<timestamp>.jsonl)",
+    )
+    p_pr.add_argument(
+        "--pie-instance",
+        type=int,
+        metavar="ID",
+        help="PIE instance to record (FWorldContext::PIEInstance); default: the first PIE world",
+    )
+    p_pr.add_argument("--timeout", type=float, metavar="SEC", help="Wall-clock budget for the recording (default: 120)")
+    p_pr.set_defaults(func=cmd_pie_record)
 
     p_iai = sub.add_parser(
         "inspect-anim-instance",

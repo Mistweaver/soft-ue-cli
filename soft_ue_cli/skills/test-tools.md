@@ -1158,6 +1158,47 @@ def _run_single_mode(mode_name: str, caller) -> list[dict]:
         "frames": 2,
         "delta": 0.0166666,
     }, lambda r: r.get("ticks") == 2 and r.get("world_time_delta", 0) > 0, timeout=PIE_TIMEOUT)
+
+    # pie-record: one JSON line per tick after a header; a failing sampler stops and keeps earlier frames.
+    _pie_record_tmp = tempfile.mkdtemp(prefix="soft_ue_pie_record_")
+    _pie_record_sampler = os.path.join(_pie_record_tmp, "sampler.py")
+    _pie_record_failing = os.path.join(_pie_record_tmp, "failing_sampler.py")
+    with open(_pie_record_sampler, "w", encoding="utf-8") as _f:
+        _f.write("def sample(ctx):\n    return {'frame': ctx.frame, 'world': ctx.world.get_name()}\n")
+    with open(_pie_record_failing, "w", encoding="utf-8") as _f:
+        _f.write(
+            "def sample(ctx):\n"
+            "    if ctx.frame == 2:\n"
+            "        raise RuntimeError('pie-record test failure')\n"
+            "    return {}\n"
+        )
+
+    def _pie_record_wrote_every_frame(r):
+        if r.get("frames_recorded") != 30 or r.get("requested_frames") != 30:
+            return False
+        with open(r["output_path"], encoding="utf-8") as f:
+            lines = [json.loads(line) for line in f]
+        times = [line["world_time"] for line in lines[1:]]
+        return (
+            lines[0]["type"] == "header"
+            and [line["frame"] for line in lines[1:]] == list(range(30))
+            and all(later > earlier for earlier, later in zip(times, times[1:]))
+            and lines[1]["data"]["world"] == r.get("world_name")
+        )
+
+    run_test("pie-record 0.5s at 1/60", "pie-record", {
+        "duration": 0.5,
+        "script": _pie_record_sampler,
+        "output": os.path.join(_pie_record_tmp, "rec.jsonl"),
+    }, _pie_record_wrote_every_frame, timeout=PIE_TIMEOUT)
+    run_test("pie-record sampler failure keeps earlier frames", "pie-record", {
+        "duration": 0.5,
+        "script": _pie_record_failing,
+        "output": os.path.join(_pie_record_tmp, "failing.jsonl"),
+    }, lambda r: r.get("success") is False
+        and r.get("failed_frame") == 2
+        and r.get("frames_recorded") == 2
+        and "pie-record test failure" in r.get("traceback", ""), timeout=PIE_TIMEOUT)
     run_test("capture-screenshot pie-window composited", "capture-screenshot",
              {"mode": "pie-window", "scale": 70, "color_mode": "color"},
              lambda r: "file_path" in r or r.get("capture_mode") == "pie-window",

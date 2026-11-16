@@ -522,3 +522,14 @@ def test_catalog_can_filter_niagara_commands_by_niagara_plugin():
     names = {entry["name"] for entry in filter_command_metadata(plugin="Niagara")}
 
     assert {"niagara", "niagara system", "niagara system inspect"} <= names
+
+
+def test_catalog_marks_pie_record_as_a_pie_command_that_needs_python():
+    meta = get_command_metadata("pie-record")
+
+    assert meta["layer"] == "bridge"
+    assert meta["category"] == "workflow"
+    assert meta["requires_bridge"] is True
+    assert meta["requires_editor"] is True
+    assert meta["requires_pie"] is True
+    assert [plugin["module"] for plugin in meta["required_plugins"]] == ["PythonScriptPlugin"]
