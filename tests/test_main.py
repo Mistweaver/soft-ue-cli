@@ -6214,6 +6214,14 @@ def test_pie_tick_forwards_to_run_tool():
     mock_run.assert_called_once_with("pie-tick", {"frames": 30}, timeout=90.0)
 
 
+def test_pie_tick_forwards_pie_instance():
+    args = build_parser().parse_args(["pie-tick", "--frames", "2", "--pie-instance", "1"])
+    assert args.pie_instance == 1
+    with patch("soft_ue_cli.__main__._run_tool", return_value={"ticks": 2}) as mock_run:
+        cmd_pie_tick(args)
+    mock_run.assert_called_once_with("pie-tick", {"frames": 2, "pie_instance": 1}, timeout=90.0)
+
+
 def test_pie_tick_forwards_timeout_to_tool():
     ns = argparse.Namespace(frames=30, delta=None, no_auto_start=False, map=None, timeout=7.5)
     with patch("soft_ue_cli.__main__._run_tool", return_value={"ticks": 30}) as mock_run:

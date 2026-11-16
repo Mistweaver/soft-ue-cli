@@ -347,6 +347,20 @@ def test_bridge_tool_base_has_plugin_unavailable_error_contract():
     assert "ToolResult.bIsError = true;" in source
 
 
+def test_run_python_script_executes_through_shared_python_helper():
+    header = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Public/Tools/Scripting/RunPythonScriptTool.h"
+    ).read_text(encoding="utf-8")
+    source = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Tools/Scripting/RunPythonScriptTool.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert '#include "Tools/Scripting/BridgePython.h"' in source
+    assert "SoftUE::Python::IsAvailable()" in source
+    assert "SoftUE::Python::Execute(" in source
+    assert "ExecutePythonCommand" not in header + source
+
+
 def test_optional_plugin_tools_return_plugin_unavailable():
     python_tool = _plugin_source_path(
         "Source/SoftUEBridgeEditor/Private/Tools/Scripting/RunPythonScriptTool.cpp"
@@ -1359,9 +1373,12 @@ def test_bridge_tools_declare_safe_execution_context_metadata():
 def test_pie_tick_reports_structured_timeout_and_phase_diagnostics():
     source = _plugin_source_path("Source/SoftUEBridgeEditor/Private/Tools/PIE/PieTickTool.cpp").read_text(encoding="utf-8")
     header = _plugin_source_path("Source/SoftUEBridgeEditor/Public/Tools/PIE/PieTickTool.h").read_text(encoding="utf-8")
+    source += _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/Utils/BridgeFixedStepTicker.cpp"
+    ).read_text(encoding="utf-8")
 
     for token in (
-        "BuildPieTickTimeoutResult",
+        "pie_tick_timeout",
         "active_phase",
         "requested_frames",
         "frames_completed",
@@ -1374,6 +1391,23 @@ def test_pie_tick_reports_structured_timeout_and_phase_diagnostics():
         "tick_frames",
     ):
         assert token in source or token in header
+
+
+def test_pie_tick_advances_frames_through_shared_fixed_step_ticker():
+    source = _plugin_source_path("Source/SoftUEBridgeEditor/Private/Tools/PIE/PieTickTool.cpp").read_text(encoding="utf-8")
+    header = _plugin_source_path("Source/SoftUEBridgeEditor/Public/Tools/PIE/PieTickTool.h").read_text(encoding="utf-8")
+
+    assert '#include "Utils/BridgeFixedStepTicker.h"' in source
+    assert "SoftUE::FixedStepTicker::TickWorld(" in source
+    assert "TickWorldFrames" not in source + header
+
+
+def test_pie_tick_selects_its_world_through_shared_pie_world_discovery():
+    source = _plugin_source_path("Source/SoftUEBridgeEditor/Private/Tools/PIE/PieTickTool.cpp").read_text(encoding="utf-8")
+
+    assert "FBridgePIEWorlds::Select(" in source
+    assert 'TEXT("pie_instance")' in source
+    assert "GEditor->PlayWorld : nullptr" not in source
 
 
 def test_window_screenshot_avoids_unsafe_pie_world_rendering_path():
@@ -2016,3 +2050,36 @@ def test_insights_csv_stats_reads_the_csv_profiler_provider():
     # point; without it a large WorldTickMisc reads as "a slow function".
     assert "WorldTickMisc" in source
     assert "residual" in source
+
+
+def test_pie_record_tool_registers_at_module_startup_and_reuses_shared_pie_pieces():
+    module = _plugin_source_path(
+        "Source/SoftUEBridgeEditor/Private/SoftUEBridgeEditorModule.cpp"
+    ).read_text(encoding="utf-8")
+    header = _plugin_source_path("Source/SoftUEBridgeEditor/Public/Tools/PIE/PieRecordTool.h").read_text(encoding="utf-8")
+    source = _plugin_source_path("Source/SoftUEBridgeEditor/Private/Tools/PIE/PieRecordTool.cpp").read_text(encoding="utf-8")
+
+    assert '#include "Tools/PIE/PieRecordTool.h"' in module
+    assert "Registry.RegisterToolClass<UPieRecordTool>();" in module
+    assert 'TEXT("pie-record")' in header
+    assert "EBridgeToolExecutionContext::PIEWorldTickSafe" in header
+    assert "SoftUE::PieRecord::MakePlan(" in source
+    assert "FBridgePIEWorlds::Select(" in source
+    assert "SoftUE::FixedStepTicker::TickWorld(" in source
+    assert 'PluginUnavailable(\n\t\t\tTEXT("PythonScriptPlugin")' in source.replace("\r\n", "\n")
+    assert "pie_record_timeout" in source
+
+
+def test_pie_record_reports_tick_and_sampler_cost():
+    source = _plugin_source_path("Source/SoftUEBridgeEditor/Private/Tools/PIE/PieRecordTool.cpp").read_text(encoding="utf-8")
+
+    for field in ("avg_tick_ms", "max_tick_ms", "avg_sample_ms", "wall_seconds"):
+        assert f'TEXT("{field}")' in source
+    assert "Run.StepDurations" in source
+
+
+def test_pie_record_sampler_runtime_ships_in_the_plugin():
+    runtime = _plugin_source_path("Content/Python/soft_ue_bridge_pie_record.py")
+
+    assert runtime.is_file()
+    assert "import unreal" not in runtime.read_text(encoding="utf-8").split("def _find_world_in_editor")[0]

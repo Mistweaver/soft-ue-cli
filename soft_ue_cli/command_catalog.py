@@ -1449,6 +1449,7 @@ _PIE_COMMANDS = {
     "exec-console-command",
     "inspect-pawn-possession",
     "inspect-runtime-widgets",
+    "pie-record",
     "pie-session",
     "pie-tick",
     "trigger-input",
@@ -1472,6 +1473,8 @@ def _plugin_requirements_for_command(name: str) -> list[dict[str, Any]]:
         return [_plugin("Animation Insights", "GameplayInsights", "Required for Rewind Debugger recording and inspection.")]
     if name == "trigger-input":
         return [_plugin("Enhanced Input", "EnhancedInput", "Required only for Enhanced Input action injection.")]
+    if name == "pie-record":
+        return [_plugin("Python Editor Script Plugin", "PythonScriptPlugin", "Required to run the sampler script.")]
     return []
 
 
@@ -1503,7 +1506,7 @@ def _default_entry(name: str, summary: str = "") -> dict[str, Any]:
     required_plugins = _plugin_requirements_for_command(name)
     is_client_side = name in _CLIENT_SIDE_COMMANDS
     requires_bridge = not is_client_side
-    editor_plugin_names = {"Mutable", "StateTree", "Animation Insights"}
+    editor_plugin_names = {"Mutable", "StateTree", "Animation Insights", "Python Editor Script Plugin"}
     requires_editor_plugin = any(req["name"] in editor_plugin_names for req in required_plugins)
     requires_editor = requires_bridge and (
         name in _EDITOR_OPTIONAL_COMMANDS

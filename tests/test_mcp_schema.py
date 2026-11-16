@@ -736,3 +736,21 @@ def test_capture_scene_schema_uses_native_json_types():
     assert params["properties"]["isolate"]["type"] == "boolean"
     assert params["properties"]["world"]["enum"] == ["editor", "pie"]
     assert params.get("required", []) == ["target"]
+
+
+def test_pie_record_schema_uses_native_json_types():
+    params = next(t for t in extract_tools() if t["name"] == "pie-record")["parameters"]
+    properties = params["properties"]
+
+    assert properties["duration"]["type"] == "number"
+    assert properties["delta"]["type"] == "number"
+    assert properties["timeout"]["type"] == "number"
+    assert properties["pie_instance"]["type"] == "integer"
+    assert properties["script"]["type"] == "string"
+    assert properties["output"]["type"] == "string"
+    assert sorted(params.get("required", [])) == ["duration", "script"]
+
+
+def test_pie_tick_schema_exposes_pie_instance_as_an_integer():
+    tools = {t["name"]: t for t in extract_tools()}
+    assert tools["pie-tick"]["parameters"]["properties"]["pie_instance"]["type"] == "integer"

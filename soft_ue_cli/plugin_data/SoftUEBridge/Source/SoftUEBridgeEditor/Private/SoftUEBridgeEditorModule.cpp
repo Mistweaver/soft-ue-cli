@@ -50,6 +50,7 @@
 // PIE
 #include "Tools/PIE/ExecConsoleCommandTool.h"
 #include "Tools/PIE/PieSessionTool.h"
+#include "Tools/PIE/PieRecordTool.h"
 #include "Tools/PIE/PieTickTool.h"
 #include "Tools/PIE/InspectPawnPossessionTool.h"
 
@@ -366,6 +367,7 @@ void FSoftUEBridgeEditorModule::StartupModule()
 	Registry.RegisterToolClass<UExecConsoleCommandTool>();
 	Registry.RegisterToolClass<UPieSessionTool>();
 	Registry.RegisterToolClass<UPieTickTool>();
+	Registry.RegisterToolClass<UPieRecordTool>();
 	Registry.RegisterToolClass<UInspectPawnPossessionTool>();
 
 	// Performance
