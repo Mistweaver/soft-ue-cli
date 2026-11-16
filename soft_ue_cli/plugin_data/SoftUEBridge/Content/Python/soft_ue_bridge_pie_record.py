@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -33,12 +34,22 @@ def _find_world_in_editor(world_path: str) -> Any:
 
 
 def _load_sampler(script_path: str) -> Callable[[SampleContext], Any]:
+    """Loads the script fresh and keeps it in sys.modules until finish(), as a normal import would.
+
+    dataclasses, typing, and pickle look a class's module up in sys.modules, so a script that is not
+    registered there can fail in ways unrelated to its own code.
+    """
     spec = importlib.util.spec_from_file_location(_SAMPLER_MODULE_NAME, script_path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sampler = getattr(module, "sample", None)
-    if not callable(sampler):
-        raise ValueError(f"{script_path} does not define a callable sample(ctx)")
+    sys.modules[_SAMPLER_MODULE_NAME] = module
+    try:
+        spec.loader.exec_module(module)
+        sampler = getattr(module, "sample", None)
+        if not callable(sampler):
+            raise ValueError(f"{script_path} does not define a callable sample(ctx)")
+    except BaseException:
+        sys.modules.pop(_SAMPLER_MODULE_NAME, None)
+        raise
     return sampler
 
 
@@ -50,8 +61,12 @@ class _Recording:
         self._file = output_path.open("w", encoding="utf-8", newline="\n")
 
     def write(self, line: dict[str, Any]) -> None:
-        """Encodes the whole line before writing, so a value JSON rejects never leaves a partial line."""
-        self._file.write(json.dumps(line, ensure_ascii=False) + "\n")
+        """Encodes the whole line before writing, so a value JSON rejects never leaves a partial line.
+
+        NaN and infinity are rejected rather than written as the NaN and Infinity tokens, which are not
+        JSON and which strict readers refuse.
+        """
+        self._file.write(json.dumps(line, ensure_ascii=False, allow_nan=False) + "\n")
         self._file.flush()
 
     def close(self) -> None:
@@ -75,6 +90,7 @@ def start(
     sampler = _load_sampler(script_path)
     world = (find_world or _find_world_in_editor)(world_path)
     if world is None:
+        sys.modules.pop(_SAMPLER_MODULE_NAME, None)
         raise LookupError(f"PIE world {world_path} was not found")
     _active = _Recording(Path(output_path), sampler, world)
     _active.write({"type": "header", "script": script_path, **header})
@@ -102,6 +118,7 @@ def sample(frame: int, world_time: float, delta_seconds: float) -> None:
 
 def finish() -> None:
     global _active
+    sys.modules.pop(_SAMPLER_MODULE_NAME, None)
     if _active is not None:
         _active.close()
         _active = None

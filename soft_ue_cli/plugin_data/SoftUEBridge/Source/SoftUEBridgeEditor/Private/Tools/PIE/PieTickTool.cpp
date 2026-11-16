@@ -21,7 +21,6 @@ namespace
 	constexpr float DefaultPieTickTimeoutSeconds = 30.0f;
 }
 
-
 FString UPieTickTool::GetToolDescription() const
 {
 	return TEXT("Advance the PIE world by N frames at a pinned delta time. Starts PIE if not running by default.");
@@ -89,9 +88,12 @@ FBridgeToolResult UPieTickTool::Execute(
 
 	const bool bAutoStart = GetBoolArgOrDefault(Arguments, TEXT("auto_start"), true);
 	const FString MapPath = GetStringArgOrDefault(Arguments, TEXT("map"));
-	const TOptional<int32> PIEInstance = Arguments->HasField(TEXT("pie_instance"))
-		? TOptional<int32>(GetIntArgOrDefault(Arguments, TEXT("pie_instance"), INDEX_NONE))
-		: TOptional<int32>();
+	const TValueOrError<TOptional<int32>, FString> PIEInstanceOrError = FBridgePIEWorlds::ReadInstanceArgument(*Arguments);
+	if (PIEInstanceOrError.HasError())
+	{
+		return FBridgeToolResult::Error(FString::Printf(TEXT("pie-tick: %s"), *PIEInstanceOrError.GetError()));
+	}
+	const TOptional<int32> PIEInstance = PIEInstanceOrError.GetValue();
 
 	FBridgeTickOperation Operation;
 	Operation.ToolName = PieTickToolName;

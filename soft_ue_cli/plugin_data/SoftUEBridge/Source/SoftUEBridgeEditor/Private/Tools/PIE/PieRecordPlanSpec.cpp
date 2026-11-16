@@ -2,6 +2,7 @@
 
 #include "Tools/PIE/PieRecordPlan.h"
 #include "Misc/AutomationTest.h"
+#include <limits>
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -51,6 +52,20 @@ bool FPieRecordPlanSpec::RunTest(const FString& Parameters)
 	TestEqual(TEXT("one over the cap is refused"), FramesFor(MaxFrames + 1, 1.0), -1);
 	TestTrue(TEXT("cap error names the frames and the limit"),
 		ErrorFor(MaxFrames + 1, 1.0).Contains(TEXT("10001 frames")) && ErrorFor(MaxFrames + 1, 1.0).Contains(TEXT("10000")));
+
+	// counts far past the int64 range are refused, not wrapped to a small number
+	TestEqual(TEXT("a huge duration is refused"), FramesFor(1e30, 1.0 / 60.0), -1);
+	TestEqual(TEXT("a tiny delta is refused"), FramesFor(1.0, 1e-30), -1);
+	TestTrue(TEXT("a huge count names the limit"), ErrorFor(1e30, 1.0 / 60.0).Contains(TEXT("the limit is 10000")));
+
+	// NaN and infinity are refused, and a delta that rounds to zero as a float cannot tick
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	const double Infinity = std::numeric_limits<double>::infinity();
+	TestTrue(TEXT("NaN duration is refused"), ErrorFor(NaN, 1.0 / 60.0).Contains(TEXT("duration")));
+	TestTrue(TEXT("infinite duration is refused"), ErrorFor(Infinity, 1.0 / 60.0).Contains(TEXT("duration")));
+	TestTrue(TEXT("NaN delta is refused"), ErrorFor(1.0, NaN).Contains(TEXT("delta")));
+	TestTrue(TEXT("infinite delta is refused"), ErrorFor(1.0, Infinity).Contains(TEXT("delta")));
+	TestTrue(TEXT("a delta below float range is refused"), ErrorFor(1e-50, 1e-50).Contains(TEXT("too small")));
 
 	// durations and deltas must be positive
 	TestTrue(TEXT("zero duration is refused"), ErrorFor(0.0, 1.0 / 60.0).Contains(TEXT("duration")));

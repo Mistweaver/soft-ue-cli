@@ -32,7 +32,9 @@ namespace SoftUE::FixedStepTicker
 				return Result;
 			}
 
-			if (Clock() > Operation.DeadlineSeconds)
+			// Every requested frame ran, so the run is complete even if the last one finished late.
+			const bool bLastFrame = FrameIndex + 1 == Operation.RequestedFrames;
+			if (!bLastFrame && Clock() > Operation.DeadlineSeconds)
 			{
 				Result.Outcome = EBridgeTickRunOutcome::TimedOut;
 				return Result;

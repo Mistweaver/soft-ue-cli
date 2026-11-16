@@ -64,11 +64,18 @@ bool FBridgeFixedStepTickerSpec::RunTest(const FString& Parameters)
 	TestTrue(TEXT("refused before frame 3"), OnDeadline.Outcome == EBridgeTickRunOutcome::TimedOut);
 	TestEqual(TEXT("two frames fit the budget"), OnDeadline.FramesTicked, 2);
 
-	// a frame that finishes past the deadline is a timeout, even when it was the last one
+	// a frame that finishes past the deadline is a timeout when frames remain after it
 	Reset();
-	FBridgeTickRun Overrun = Run(Operation(1, 0.5), Clock, Step, KeepGoing);
-	TestTrue(TEXT("overrunning the last frame times out"), Overrun.Outcome == EBridgeTickRunOutcome::TimedOut);
+	FBridgeTickRun Overrun = Run(Operation(2, 0.5), Clock, Step, KeepGoing);
+	TestTrue(TEXT("overrunning an earlier frame times out"), Overrun.Outcome == EBridgeTickRunOutcome::TimedOut);
 	TestEqual(TEXT("the overrunning frame still counts"), Overrun.FramesTicked, 1);
+	TestTrue(TEXT("its callback still ran"), SeenFrames == TArray<int32>({0}));
+
+	// but a run whose last frame finishes past the deadline ticked every frame, so it is complete
+	Reset();
+	FBridgeTickRun LateFinish = Run(Operation(2, 1.5), Clock, Step, KeepGoing);
+	TestTrue(TEXT("overrunning the last frame completes"), LateFinish.Outcome == EBridgeTickRunOutcome::Completed);
+	TestEqual(TEXT("both frames ticked"), LateFinish.FramesTicked, 2);
 
 	// the run times each step on the clock, without the after-step callback
 	Reset();

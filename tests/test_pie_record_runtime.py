@@ -146,6 +146,59 @@ def test_sample_rejects_a_result_json_cannot_encode_and_keeps_earlier_frames(run
     assert lines[1]["data"] == {"ok": True}
 
 
+@pytest.mark.parametrize("value", ["float('nan')", "float('inf')", "float('-inf')"])
+def test_sample_rejects_nan_and_infinity_instead_of_writing_invalid_json(runtime, tmp_path, value):
+    script = _write_sampler(
+        tmp_path,
+        "def sample(ctx):\n"
+        f"    return {{'ok': True}} if ctx.frame == 0 else {{'x': {value}}}\n",
+    )
+    output = _start(runtime, tmp_path, script)
+    runtime.sample(0, 0.5, 0.5)
+
+    with pytest.raises(TypeError, match=r"frame 1: sample\(ctx\) returned a value JSON cannot encode"):
+        runtime.sample(1, 1.0, 0.5)
+    runtime.finish()
+
+    lines = _read_lines(output)
+    assert [line["type"] for line in lines] == ["header", "sample"]
+    assert lines[1]["data"] == {"ok": True}
+
+
+def test_the_sampler_module_is_registered_while_recording_so_dataclasses_work(runtime, tmp_path):
+    script = _write_sampler(
+        tmp_path,
+        "from __future__ import annotations\n"
+        "import dataclasses, sys\n"
+        "from typing import ClassVar\n"
+        "\n"
+        "@dataclasses.dataclass\n"
+        "class Bone:\n"
+        "    kind: ClassVar[str] = 'bone'\n"
+        "    name: str\n"
+        "\n"
+        "def sample(ctx):\n"
+        "    return {'bone': dataclasses.asdict(Bone('hand_r')), 'registered': __name__ in sys.modules}\n",
+    )
+    output = _start(runtime, tmp_path, script)
+    assert runtime._SAMPLER_MODULE_NAME in sys.modules
+
+    runtime.sample(0, 0.5, 0.5)
+    runtime.finish()
+
+    assert runtime._SAMPLER_MODULE_NAME not in sys.modules
+    assert _read_lines(output)[1]["data"] == {"bone": {"name": "hand_r"}, "registered": True}
+
+
+def test_a_script_that_fails_to_load_is_not_left_in_sys_modules(runtime, tmp_path):
+    script = _write_sampler(tmp_path, "raise RuntimeError('broken import')\n")
+
+    with pytest.raises(RuntimeError, match="broken import"):
+        _start(runtime, tmp_path, script)
+
+    assert runtime._SAMPLER_MODULE_NAME not in sys.modules
+
+
 def test_an_exception_in_sample_reaches_the_caller_and_keeps_earlier_frames(runtime, tmp_path):
     script = _write_sampler(
         tmp_path,

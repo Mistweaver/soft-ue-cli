@@ -150,21 +150,36 @@ namespace
 			return MakeError(TEXT("'timeout' must be > 0"));
 		}
 
+		// The editor would resolve a relative path against its own working directory (Binaries/<Platform>),
+		// never the caller's, so only absolute paths are accepted. The CLI always sends absolute paths.
 		Arguments->TryGetStringField(TEXT("script"), Request.ScriptPath);
-		if (Request.ScriptPath.IsEmpty() || !FPaths::FileExists(Request.ScriptPath))
+		if (Request.ScriptPath.IsEmpty())
+		{
+			return MakeError(TEXT("'script' is required"));
+		}
+		if (FPaths::IsRelative(Request.ScriptPath))
+		{
+			return MakeError(FString::Printf(TEXT("'script' must be an absolute path (got '%s')"), *Request.ScriptPath));
+		}
+		if (!FPaths::FileExists(Request.ScriptPath))
 		{
 			return MakeError(FString::Printf(TEXT("script not found: %s"), *Request.ScriptPath));
 		}
 
 		FString RequestedOutput;
 		Arguments->TryGetStringField(TEXT("output"), RequestedOutput);
+		if (!RequestedOutput.IsEmpty() && FPaths::IsRelative(RequestedOutput))
+		{
+			return MakeError(FString::Printf(TEXT("'output' must be an absolute path (got '%s')"), *RequestedOutput));
+		}
 		Request.OutputPath = FPaths::ConvertRelativePathToFull(RequestedOutput.IsEmpty() ? DefaultOutputPath() : RequestedOutput);
 
-		int32 PIEInstance = INDEX_NONE;
-		if (Arguments->TryGetNumberField(TEXT("pie_instance"), PIEInstance))
+		TValueOrError<TOptional<int32>, FString> PIEInstance = FBridgePIEWorlds::ReadInstanceArgument(*Arguments);
+		if (PIEInstance.HasError())
 		{
-			Request.PIEInstance = PIEInstance;
+			return MakeError(PIEInstance.StealError());
 		}
+		Request.PIEInstance = PIEInstance.GetValue();
 		return MakeValue(MoveTemp(Request));
 	}
 
@@ -264,12 +279,12 @@ TMap<FString, FBridgeSchemaProperty> UPieRecordTool::GetInputSchema() const
 
 	FBridgeSchemaProperty Output;
 	Output.Type = TEXT("string");
-	Output.Description = TEXT("JSONL file to write (default: <Project>/Saved/SoftUEBridge/pie-record/<timestamp>.jsonl)");
+	Output.Description = TEXT("Absolute path of the JSONL file to write (default: <Project>/Saved/SoftUEBridge/pie-record/<timestamp>.jsonl)");
 	Schema.Add(TEXT("output"), Output);
 
 	FBridgeSchemaProperty PIEInstance;
 	PIEInstance.Type = TEXT("integer");
-	PIEInstance.Description = TEXT("PIE instance to record (FWorldContext::PIEInstance); default: the first PIE world");
+	PIEInstance.Description = TEXT("PIE instance to record (FWorldContext::PIEInstance, a non-negative integer); default: the first PIE world");
 	Schema.Add(TEXT("pie_instance"), PIEInstance);
 
 	FBridgeSchemaProperty Timeout;
@@ -279,7 +294,6 @@ TMap<FString, FBridgeSchemaProperty> UPieRecordTool::GetInputSchema() const
 
 	return Schema;
 }
-
 
 FBridgeToolResult UPieRecordTool::Execute(
 	const TSharedPtr<FJsonObject>& Arguments,

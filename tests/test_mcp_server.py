@@ -225,6 +225,26 @@ def test_tool_call_forwards_pie_timeout_to_http_timeout(mock_call_tool):
     assert arguments["timeout"] == 42.5
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "kwargs", "expected_http_timeout"),
+    [
+        ("pie-tick", {"frames": 3}, 90.0),
+        ("pie-tick", {"frames": 3, "timeout": 10.0}, 70.0),
+        ("pie-record", {"duration": 1.0, "script": "C:/s.py"}, 180.0),
+        ("pie-record", {"duration": 1.0, "script": "C:/s.py", "timeout": 300.0}, 360.0),
+    ],
+)
+@patch("soft_ue_cli.client.call_tool_ex")
+def test_tick_tools_wait_past_their_own_budget(mock_call_tool, tool_name, kwargs, expected_http_timeout):
+    mock_call_tool.return_value = ({"status": "ok"}, BridgeCallMeta())
+    server = create_server()
+    tool_fn = next(tool.fn for tool in server._tool_manager._tools.values() if tool.name == tool_name)
+
+    tool_fn(**kwargs)
+
+    assert mock_call_tool.call_args.kwargs["timeout"] == expected_http_timeout
+
+
 @patch("soft_ue_cli.__main__.call_tool_ex")
 def test_tool_call_normalizes_add_graph_node_created_nodes(mock_call_tool):
     mock_call_tool.return_value = (

@@ -65,6 +65,20 @@ const FBridgePIEWorld* FBridgePIEWorlds::Select(
 	return First;
 }
 
+TValueOrError<TOptional<int32>, FString> FBridgePIEWorlds::ReadInstanceArgument(const FJsonObject& Arguments)
+{
+	double Requested = 0.0;
+	if (!Arguments.TryGetNumberField(TEXT("pie_instance"), Requested))
+	{
+		return MakeValue(TOptional<int32>());
+	}
+	if (Requested != FMath::FloorToDouble(Requested) || Requested < 0.0 || Requested > MAX_int32)
+	{
+		return MakeError(FString::Printf(TEXT("'pie_instance' must be a non-negative integer (got %g)"), Requested));
+	}
+	return MakeValue(TOptional<int32>(static_cast<int32>(Requested)));
+}
+
 FString FBridgePIEWorlds::AvailableInstanceIds(const TArray<FBridgePIEWorld>& Worlds)
 {
 	TArray<int32> InstanceIds;

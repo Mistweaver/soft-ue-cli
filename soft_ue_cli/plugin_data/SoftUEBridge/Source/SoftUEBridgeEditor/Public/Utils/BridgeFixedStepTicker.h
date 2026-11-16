@@ -65,8 +65,9 @@ namespace SoftUE::FixedStepTicker
 {
 	/**
 	 * Runs Step once per requested frame, then AfterStep with the zero-based frame index; AfterStep
-	 * returning false stops the run. The budget is checked before each frame and again after it, so a
-	 * frame that finishes past the deadline is reported as a timeout. Plain callables only, so the
+	 * returning false stops the run. The budget is checked before each frame and again after every frame
+	 * but the last, so a frame that finishes past the deadline is reported as a timeout unless it completed
+	 * the run; a run that ticked every requested frame is complete. Plain callables only, so the
 	 * automation spec drives it without a world.
 	 */
 	SOFTUEBRIDGEEDITOR_API FBridgeTickRun Run(

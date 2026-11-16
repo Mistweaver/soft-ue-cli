@@ -39,6 +39,27 @@ bool FBridgePIEWorldsSpec::RunTest(const FString& Parameters)
 	TestTrue(TEXT("no worlds fails"), FBridgePIEWorlds::Select({}, {}, SelectError) == nullptr);
 	TestEqual(TEXT("no worlds error says to start PIE"), SelectError, FString(TEXT("no PIE world available; start PIE first")));
 
+	// reads pie_instance as an optional non-negative whole number
+	auto ReadInstance = [](TFunctionRef<void(FJsonObject&)> Fill)
+	{
+		FJsonObject Arguments;
+		Fill(Arguments);
+		return FBridgePIEWorlds::ReadInstanceArgument(Arguments);
+	};
+	const auto Absent = ReadInstance([](FJsonObject&) {});
+	TestTrue(TEXT("absent pie_instance is unset"), Absent.HasValue() && !Absent.GetValue().IsSet());
+	const auto Two = ReadInstance([](FJsonObject& A) { A.SetNumberField(TEXT("pie_instance"), 2.0); });
+	TestTrue(TEXT("whole pie_instance is read"), Two.HasValue() && Two.GetValue() == TOptional<int32>(2));
+	const auto Zero = ReadInstance([](FJsonObject& A) { A.SetNumberField(TEXT("pie_instance"), 0.0); });
+	TestTrue(TEXT("zero is a valid instance"), Zero.HasValue() && Zero.GetValue() == TOptional<int32>(0));
+	const auto Fraction = ReadInstance([](FJsonObject& A) { A.SetNumberField(TEXT("pie_instance"), 1.5); });
+	TestTrue(TEXT("fractional pie_instance is refused, not truncated"),
+		Fraction.HasError() && Fraction.GetError().Contains(TEXT("non-negative integer (got 1.5)")));
+	const auto Negative = ReadInstance([](FJsonObject& A) { A.SetNumberField(TEXT("pie_instance"), -1.0); });
+	TestTrue(TEXT("negative pie_instance is refused"), Negative.HasError());
+	const auto Huge = ReadInstance([](FJsonObject& A) { A.SetNumberField(TEXT("pie_instance"), 1e12); });
+	TestTrue(TEXT("pie_instance past int32 is refused"), Huge.HasError());
+
 	// returns stable net mode names
 	TestEqual(TEXT("standalone"), FBridgePIEWorlds::NetModeName(NM_Standalone), FString(TEXT("standalone")));
 	TestEqual(TEXT("dedicated server"), FBridgePIEWorlds::NetModeName(NM_DedicatedServer), FString(TEXT("dedicated-server")));

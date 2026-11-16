@@ -12,21 +12,23 @@ namespace SoftUE::PieRecord
 
 	TValueOrError<FPieRecordPlan, FString> MakePlan(double DurationSeconds, double DeltaSeconds)
 	{
-		if (DurationSeconds <= 0.0)
+		// Written as !(x > 0) so NaN is refused too.
+		if (!(DurationSeconds > 0.0) || !FMath::IsFinite(DurationSeconds))
 		{
-			return MakeError(FString::Printf(TEXT("duration must be > 0 seconds (got %g)"), DurationSeconds));
+			return MakeError(FString::Printf(TEXT("duration must be a finite number > 0 seconds (got %g)"), DurationSeconds));
 		}
-		if (DeltaSeconds <= 0.0)
+		if (!(DeltaSeconds > 0.0) || !FMath::IsFinite(DeltaSeconds))
 		{
-			return MakeError(FString::Printf(TEXT("delta must be > 0 seconds (got %g)"), DeltaSeconds));
+			return MakeError(FString::Printf(TEXT("delta must be a finite number > 0 seconds (got %g)"), DeltaSeconds));
 		}
 
-		const double ExactFrames = DurationSeconds / DeltaSeconds;
-		const int64 Frames = FMath::Max<int64>(1, static_cast<int64>(FMath::CeilToDouble(ExactFrames - FrameRoundingTolerance)));
-		if (Frames > MaxFrames)
+		// Check the cap while the count is still a double: converting a count past the int64 range is
+		// undefined, and on x64 it wraps to a negative number that would slip under the cap.
+		const double Frames = FMath::Max(1.0, FMath::CeilToDouble(DurationSeconds / DeltaSeconds - FrameRoundingTolerance));
+		if (!FMath::IsFinite(Frames) || Frames > MaxFrames)
 		{
 			return MakeError(FString::Printf(
-				TEXT("duration %gs at delta %gs is %lld frames; the limit is %d"),
+				TEXT("duration %gs at delta %gs is %.0f frames; the limit is %d"),
 				DurationSeconds,
 				DeltaSeconds,
 				Frames,
@@ -37,6 +39,10 @@ namespace SoftUE::PieRecord
 		Plan.DurationSeconds = DurationSeconds;
 		Plan.DeltaSeconds = static_cast<float>(DeltaSeconds);
 		Plan.Frames = static_cast<int32>(Frames);
+		if (!(Plan.DeltaSeconds > 0.0f))
+		{
+			return MakeError(FString::Printf(TEXT("delta %g seconds is too small to tick with"), DeltaSeconds));
+		}
 		return MakeValue(Plan);
 	}
 }
