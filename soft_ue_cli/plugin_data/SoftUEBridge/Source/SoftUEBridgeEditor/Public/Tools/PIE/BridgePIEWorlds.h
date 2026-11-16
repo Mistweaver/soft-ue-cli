@@ -21,6 +21,11 @@ public:
 	static TArray<FBridgePIEWorld> Enumerate();
 	static const FBridgePIEWorld* Resolve(const TArray<FBridgePIEWorld>& Worlds, int32 PIEInstance);
 	static FString AvailableInstanceIds(const TArray<FBridgePIEWorld>& Worlds);
+	/**
+	 * The world for PIEInstance, or the first world when none is requested. Returns null and sets
+	 * OutError when the instance is unknown (listing the valid IDs) or there is no PIE world.
+	 */
+	static const FBridgePIEWorld* Select(const TArray<FBridgePIEWorld>& Worlds, TOptional<int32> PIEInstance, FString& OutError);
 	static FString NetModeName(ENetMode NetMode);
 	static APlayerController* ResolveLocalPlayerController(UWorld* World, int32 PlayerIndex);
 };

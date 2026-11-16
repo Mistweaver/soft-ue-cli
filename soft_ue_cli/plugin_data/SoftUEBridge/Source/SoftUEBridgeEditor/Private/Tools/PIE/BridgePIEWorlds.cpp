@@ -39,6 +39,32 @@ const FBridgePIEWorld* FBridgePIEWorlds::Resolve(const TArray<FBridgePIEWorld>& 
 	});
 }
 
+const FBridgePIEWorld* FBridgePIEWorlds::Select(
+	const TArray<FBridgePIEWorld>& Worlds,
+	TOptional<int32> PIEInstance,
+	FString& OutError)
+{
+	if (PIEInstance.IsSet())
+	{
+		const FBridgePIEWorld* Requested = Resolve(Worlds, PIEInstance.GetValue());
+		if (!Requested)
+		{
+			OutError = FString::Printf(
+				TEXT("PIE instance %d not found; available PIE instances: %s"),
+				PIEInstance.GetValue(),
+				*AvailableInstanceIds(Worlds));
+		}
+		return Requested;
+	}
+
+	const FBridgePIEWorld* First = Worlds.FindByPredicate([](const FBridgePIEWorld& Entry) { return Entry.World != nullptr; });
+	if (!First)
+	{
+		OutError = TEXT("no PIE world available; start PIE first");
+	}
+	return First;
+}
+
 FString FBridgePIEWorlds::AvailableInstanceIds(const TArray<FBridgePIEWorld>& Worlds)
 {
 	TArray<int32> InstanceIds;

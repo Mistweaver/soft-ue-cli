@@ -31,15 +31,6 @@ public:
 		const FBridgeToolContext& Context) override;
 
 private:
-	// Execute a Python command or file and capture log output and error text.
-	bool ExecutePythonCommand(
-		const FString& Command,
-		EPythonCommandExecutionMode ExecutionMode,
-		EPythonFileExecutionScope FileExecutionScope,
-		bool& bOutSuccess,
-		FString& OutOutput,
-		FString& OutError);
-
 	// Resolve and read a script file from disk for validation before execution.
 	bool ReadScriptFile(const FString& ScriptPath, FString& OutResolvedPath, FString& OutScript, FString& OutError);
 

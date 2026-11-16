@@ -27,6 +27,18 @@ bool FBridgePIEWorldsSpec::RunTest(const FString& Parameters)
 	TestTrue(TEXT("unknown instance is absent"), FBridgePIEWorlds::Resolve(Worlds, 9) == nullptr);
 	TestEqual(TEXT("available IDs are unique and sorted"), FBridgePIEWorlds::AvailableInstanceIds(Worlds), FString(TEXT("1, 2")));
 
+	// selects the requested instance, or the first world when none is requested
+	FString SelectError;
+	const FBridgePIEWorld* Requested = FBridgePIEWorlds::Select(Worlds, 1, SelectError);
+	TestEqual(TEXT("requested instance is selected"), Requested ? Requested->World : nullptr, WorldB);
+	const FBridgePIEWorld* Default = FBridgePIEWorlds::Select(Worlds, {}, SelectError);
+	TestEqual(TEXT("no request selects the first world"), Default ? Default->World : nullptr, WorldA);
+	TestTrue(TEXT("unknown requested instance fails"), FBridgePIEWorlds::Select(Worlds, 9, SelectError) == nullptr);
+	TestEqual(TEXT("unknown instance error lists the valid IDs"), SelectError,
+		FString(TEXT("PIE instance 9 not found; available PIE instances: 1, 2")));
+	TestTrue(TEXT("no worlds fails"), FBridgePIEWorlds::Select({}, {}, SelectError) == nullptr);
+	TestEqual(TEXT("no worlds error says to start PIE"), SelectError, FString(TEXT("no PIE world available; start PIE first")));
+
 	// returns stable net mode names
 	TestEqual(TEXT("standalone"), FBridgePIEWorlds::NetModeName(NM_Standalone), FString(TEXT("standalone")));
 	TestEqual(TEXT("dedicated server"), FBridgePIEWorlds::NetModeName(NM_DedicatedServer), FString(TEXT("dedicated-server")));
