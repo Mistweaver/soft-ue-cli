@@ -25,6 +25,7 @@
 #include "Tools/Asset/AssetRepointReferencesTool.h"
 #include "Tools/Asset/ReleaseAssetLockTool.h"
 #include "Tools/Asset/SkeletalMeshSocketTool.h"
+#include "Tools/Asset/PhysicsAssetQueryTool.h"
 
 // Blueprint
 #include "Tools/Blueprint/QueryBlueprintTool.h"
@@ -39,6 +40,7 @@
 
 // Editor
 #include "Tools/Editor/CaptureScreenshotTool.h"
+#include "Tools/Editor/CaptureSceneTool.h"
 
 // Material
 #include "Tools/Material/QueryMaterialTool.h"
@@ -48,6 +50,7 @@
 // PIE
 #include "Tools/PIE/ExecConsoleCommandTool.h"
 #include "Tools/PIE/PieSessionTool.h"
+#include "Tools/PIE/PieRecordTool.h"
 #include "Tools/PIE/PieTickTool.h"
 #include "Tools/PIE/InspectPawnPossessionTool.h"
 
@@ -93,8 +96,10 @@
 #include "Tools/Animation/AnimBlueprintRetargetTool.h"
 #include "Tools/Animation/AnimMontageInspectTool.h"
 #include "Tools/Animation/AnimMontageSlotTool.h"
+#include "Tools/Animation/AnimPoseAtTool.h"
 #include "Tools/Animation/AnimRepointReferencesTool.h"
 #include "Tools/Animation/AnimSequenceRetargetTool.h"
+#include "Tools/Animation/AnimStateMachineInspectTool.h"
 #include "Tools/Animation/AnimSyncMarkerTools.h"
 #include "Tools/Animation/PoseSearchSchemaTools.h"
 #include "Tools/Rig/RigGraphInspectTool.h"
@@ -188,9 +193,17 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	{
 		Registry.RegisterToolClass<UAnimMontageInspectTool>();
 	}
+	if (!Registry.HasTool(TEXT("anim-pose-at")))
+	{
+		Registry.RegisterToolClass<UAnimPoseAtTool>();
+	}
 	if (!Registry.HasTool(TEXT("anim-montage-set-slot-animation")))
 	{
 		Registry.RegisterToolClass<UAnimMontageSetSlotAnimationTool>();
+	}
+	if (!Registry.HasTool(TEXT("anim-state-machine-inspect")))
+	{
+		Registry.RegisterToolClass<UAnimStateMachineInspectTool>();
 	}
 	if (!Registry.HasTool(TEXT("pose-search-schema-inspect")))
 	{
@@ -227,6 +240,10 @@ void FSoftUEBridgeEditorModule::RegisterAnimationTools()
 	if (!Registry.HasTool(TEXT("skeletal-mesh-socket-remove")))
 	{
 		Registry.RegisterToolClass<USkeletalMeshSocketRemoveTool>();
+	}
+	if (!Registry.HasTool(TEXT("asset-query-physics")))
+	{
+		Registry.RegisterToolClass<UPhysicsAssetQueryTool>();
 	}
 	if (!Registry.HasTool(TEXT("blueprint-component-add")))
 	{
@@ -339,6 +356,7 @@ void FSoftUEBridgeEditorModule::StartupModule()
 
 	// Editor
 	Registry.RegisterToolClass<UCaptureScreenshotTool>();
+	Registry.RegisterToolClass<UCaptureSceneTool>();
 
 	// Material
 	Registry.RegisterToolClass<UQueryMaterialTool>();
@@ -349,6 +367,7 @@ void FSoftUEBridgeEditorModule::StartupModule()
 	Registry.RegisterToolClass<UExecConsoleCommandTool>();
 	Registry.RegisterToolClass<UPieSessionTool>();
 	Registry.RegisterToolClass<UPieTickTool>();
+	Registry.RegisterToolClass<UPieRecordTool>();
 	Registry.RegisterToolClass<UInspectPawnPossessionTool>();
 
 	// Performance

@@ -9,6 +9,7 @@
 #include "EdGraph/EdGraphSchema.h"
 #include "ScopedTransaction.h"
 #include "SoftUEBridgeEditorModule.h"
+#include "Tools/Asset/MutableIntrospectionUtils.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UObjectHash.h"
@@ -1817,6 +1818,13 @@ FBridgeToolResult UAddCustomizableObjectNodeTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -1915,6 +1923,13 @@ FBridgeToolResult USetCustomizableObjectNodePropertyTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2002,6 +2017,13 @@ FBridgeToolResult UConnectCustomizableObjectPinsTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2172,6 +2194,13 @@ FBridgeToolResult URegenerateCustomizableObjectNodePinsTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2307,6 +2336,13 @@ FBridgeToolResult USetCustomizableObjectLayoutBlocksTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2481,6 +2517,13 @@ FBridgeToolResult UCompileCustomizableObjectTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2604,6 +2647,13 @@ FBridgeToolResult UCreateCustomizableObjectFromSpecTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2809,6 +2859,13 @@ FBridgeToolResult URemoveCustomizableObjectNodeTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))
@@ -2999,6 +3056,13 @@ FBridgeToolResult UWireCustomizableObjectSlotFromTableTool::Execute(
 	UObject* AssetObject = FBridgeAssetModifier::LoadAssetByPath(AssetPath, LoadError);
 	if (!AssetObject)
 	{
+		if (!MutableIntrospectionUtils::IsMutablePluginEnabled())
+		{
+			return PluginUnavailable(
+				TEXT("Mutable"),
+				GetToolName(),
+				TEXT("Enable the Mutable plugin in Edit > Plugins, then restart the editor."));
+		}
 		return FBridgeToolResult::Error(LoadError);
 	}
 	if (!LooksLikeCustomizableObject(AssetObject))

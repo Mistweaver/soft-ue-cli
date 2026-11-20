@@ -10,8 +10,6 @@
 class UBlueprint;
 class UEdGraph;
 class UEdGraphNode;
-class FStreamSearch;
-struct FSearchData;
 
 /**
  * Tool for finding references to assets, Blueprint variables, and nodes.
@@ -21,7 +19,8 @@ struct FSearchData;
  * - "property": Find where a Blueprint variable is used within its own graphs
  * - "node": Find all usages of a specific node type or function call
  *
- * Uses UE5's Find in Blueprints (FiB) cache for faster searching when available.
+ * "node" traverses every Blueprint in the path. It reads Find in Blueprints (FiB)
+ * index state only to report whether the result can be trusted as complete.
  */
 UCLASS()
 class SOFTUEBRIDGEEDITOR_API UFindReferencesTool : public UBridgeToolBase
@@ -45,16 +44,13 @@ private:
 	/** Find usages of a variable within a Blueprint */
 	FBridgeToolResult FindPropertyReferences(const FString& AssetPath, const FString& VariableName, int32 Limit);
 
-	/** Find usages of a node type or function within a Blueprint - uses FiB cache */
+	/** Find usages of a node type or function across the Blueprints in a path */
 	FBridgeToolResult FindNodeReferences(const FString& AssetPath, const FString& NodeClass,
 									   const FString& FunctionName, int32 Limit);
 
 	/** Find usages of a node type or function - legacy method loading each Blueprint */
 	FBridgeToolResult FindNodeReferencesLegacy(const FString& AssetPath, const FString& NodeClass,
 											const FString& FunctionName, int32 Limit);
-
-	/** Use FiB cache to quickly find matching Blueprints, then load for detailed inspection */
-	TArray<FSoftObjectPath> FindMatchingBlueprintsViaFiB(const FString& SearchTerm, const FString& PathFilter);
 
 	/** Helper to get all graphs from a Blueprint */
 	TArray<UEdGraph*> GetAllGraphs(UBlueprint* Blueprint) const;

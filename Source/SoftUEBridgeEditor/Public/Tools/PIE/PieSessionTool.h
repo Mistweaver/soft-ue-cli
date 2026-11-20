@@ -39,7 +39,6 @@ private:
 	FBridgeToolResult ExecuteWaitFor(const TSharedPtr<FJsonObject>& Arguments);
 
 	FString GenerateSessionId() const;
-	AActor* FindActorByName(UWorld* World, const FString& ActorName) const;
 	TSharedPtr<FJsonValue> GetActorProperty(AActor* Actor, const FString& PropertyName) const;
 	UWorld* GetPIEWorld() const;
 	bool WaitForPIEReady(float TimeoutSeconds) const;

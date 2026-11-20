@@ -12,8 +12,6 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_CallFunction.h"
 #include "FindInBlueprintManager.h"
-#include "FindInBlueprints.h"
-#include "ImaginaryBlueprintData.h"
 #include "SoftUEBridgeEditorModule.h"
 
 FString UFindReferencesTool::GetToolDescription() const
@@ -344,95 +342,31 @@ FBridgeToolResult UFindReferencesTool::FindPropertyReferences(const FString& Ass
 	return FBridgeToolResult::Json(Result);
 }
 
-TArray<FSoftObjectPath> UFindReferencesTool::FindMatchingBlueprintsViaFiB(const FString& SearchTerm, const FString& PathFilter)
-{
-	TArray<FSoftObjectPath> MatchingBlueprints;
-
-	// Create a synchronous search using FStreamSearch
-	FStreamSearchOptions SearchOptions;
-	SearchOptions.ImaginaryDataFilter = ESearchQueryFilter::NodesFilter; // Focus on nodes
-	TSharedRef<FStreamSearch> StreamSearch = MakeShared<FStreamSearch>(SearchTerm, SearchOptions);
-
-	// Run the search synchronously
-	StreamSearch->Init();
-	StreamSearch->Run();
-	StreamSearch->EnsureCompletion();
-
-	// Get search results (these include Blueprint paths)
-	TArray<TSharedPtr<FFindInBlueprintsResult>> Results;
-	StreamSearch->GetFilteredItems(Results);
-
-	for (const TSharedPtr<FFindInBlueprintsResult>& Result : Results)
-	{
-		if (!Result.IsValid())
-		{
-			continue;
-		}
-
-		// GetParentBlueprint() will load the Blueprint, but we can check the display text
-		// to get the path without loading. The root result's display text contains the BP name.
-		// However, for safety we'll use GetParentBlueprint since that's the reliable method.
-		UBlueprint* BP = Result->GetParentBlueprint();
-		if (BP)
-		{
-			FSoftObjectPath AssetPath(BP);
-			FString PathString = AssetPath.GetAssetPathString();
-
-			// Apply path filter if specified
-			if (!PathFilter.IsEmpty() && !PathString.StartsWith(PathFilter))
-			{
-				continue;
-			}
-
-			MatchingBlueprints.AddUnique(AssetPath);
-		}
-	}
-
-	return MatchingBlueprints;
-}
-
 FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPath, const FString& NodeClass,
 													   const FString& FunctionName, int32 Limit)
 {
-	// Check FiB cache status
+	// Read FiB index state for diagnostics and completeness checks.
+	//
+	// This tool deliberately does NOT run an FStreamSearch query. Bridge tools run
+	// inside a game-thread task, and the search's worker thread can need the game
+	// thread to finish (string table loads), so waiting on it from here either
+	// deadlocks or, if the game thread is pumped, trips the TaskGraph recursion
+	// assert. Calling Run() directly instead races the worker and corrupts the heap.
+	// Every Blueprint in the path is traversed instead.
 	FFindInBlueprintSearchManager& SearchManager = FFindInBlueprintSearchManager::Get();
 	bool bCacheInProgress = SearchManager.IsCacheInProgress();
 	bool bDiscoveryInProgress = SearchManager.IsAssetDiscoveryInProgress();
 	int32 UnindexedCount = SearchManager.GetNumberUnindexedAssets();
 	int32 FailedToCacheCount = SearchManager.GetFailedToCacheCount();
 
-	// Build the search term for FiB
-	FString SearchTerm;
-	if (!NodeClass.IsEmpty())
-	{
-		SearchTerm = NodeClass;
-	}
-	if (!FunctionName.IsEmpty())
-	{
-		if (!SearchTerm.IsEmpty())
-		{
-			SearchTerm += TEXT(" ");
-		}
-		SearchTerm += FunctionName;
-	}
-
-	// Only use FiB cache if indexing is complete
-	TArray<FSoftObjectPath> FiBMatches;
-	bool bUsedFiBCache = false;
-	if (!bCacheInProgress && !bDiscoveryInProgress && UnindexedCount == 0 && FailedToCacheCount == 0)
-	{
-		FiBMatches = FindMatchingBlueprintsViaFiB(SearchTerm, AssetPath);
-		bUsedFiBCache = FiBMatches.Num() > 0;
-	}
-	const BridgeFiBCompleteness::ESearchMode SearchMode = bUsedFiBCache
-		? BridgeFiBCompleteness::ESearchMode::FiBCache
-		: BridgeFiBCompleteness::ESearchMode::FullFallback;
+	const BridgeFiBCompleteness::ESearchMode SearchMode = BridgeFiBCompleteness::ESearchMode::FullFallback;
 
 	// Build result
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 	Result->SetStringField(TEXT("type"), TEXT("node"));
 	Result->SetStringField(TEXT("search_path"), AssetPath);
-	Result->SetBoolField(TEXT("used_fib_cache"), bUsedFiBCache);
+	// Kept for response compatibility; the FiB query path was removed.
+	Result->SetBoolField(TEXT("used_fib_cache"), false);
 
 	// Add FiB cache status
 	TSharedPtr<FJsonObject> CacheStatusObj = MakeShareable(new FJsonObject);
@@ -465,25 +399,7 @@ FBridgeToolResult UFindReferencesTool::FindNodeReferences(const FString& AssetPa
 	CacheStatusObj->SetBoolField(
 		TEXT("discovery_in_progress_at_selection"), bDiscoveryInProgressAtSelection);
 
-	if (bUsedFiBCache)
-	{
-		// Use FiB-filtered results - only load matching Blueprints
-		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-		for (const FSoftObjectPath& Path : FiBMatches)
-		{
-			FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(Path);
-			if (AssetData.IsValid())
-			{
-				BlueprintsToSearch.Add(AssetData);
-			}
-		}
-		Result->SetNumberField(TEXT("fib_matches"), FiBMatches.Num());
-	}
-	else
-	{
-		// Fallback to loading all Blueprints in path (when cache not ready or no matches)
-		BlueprintsToSearch = GetBlueprintsInPath(AssetPath);
-	}
+	BlueprintsToSearch = GetBlueprintsInPath(AssetPath);
 
 	for (const FAssetData& AssetData : BlueprintsToSearch)
 	{

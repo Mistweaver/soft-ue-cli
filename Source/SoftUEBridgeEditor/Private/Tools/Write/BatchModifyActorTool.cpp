@@ -6,7 +6,6 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
-#include "EngineUtils.h"
 #include "ScopedTransaction.h"
 
 FString UBatchModifyActorTool::GetToolDescription() const
@@ -34,21 +33,6 @@ TMap<FString, FBridgeSchemaProperty> UBatchModifyActorTool::GetInputSchema() con
 TArray<FString> UBatchModifyActorTool::GetRequiredParams() const
 {
 	return { TEXT("modifications") };
-}
-
-AActor* UBatchModifyActorTool::FindActorByNameOrLabel(UWorld* World, const FString& ActorName) const
-{
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* Actor = *It;
-		if (!Actor) continue;
-		if (Actor->GetName().Equals(ActorName, ESearchCase::IgnoreCase) ||
-			Actor->GetActorLabel().Equals(ActorName, ESearchCase::IgnoreCase))
-		{
-			return Actor;
-		}
-	}
-	return nullptr;
 }
 
 FBridgeToolResult UBatchModifyActorTool::Execute(

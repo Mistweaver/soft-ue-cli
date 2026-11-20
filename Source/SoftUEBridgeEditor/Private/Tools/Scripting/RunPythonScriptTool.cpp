@@ -2,7 +2,7 @@
 
 #include "Tools/Scripting/RunPythonScriptTool.h"
 #include "SoftUEBridgeEditorModule.h"
-#include "IPythonScriptPlugin.h"
+#include "Tools/Scripting/BridgePython.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Tools/Scripting/BridgePythonCallHelper.h"
@@ -69,17 +69,13 @@ FBridgeToolResult URunPythonScriptTool::Execute(
 	const TSharedPtr<FJsonObject>& Arguments,
 	const FBridgeToolContext& Context)
 {
-	// Check if PythonScriptPlugin is available
-	if (!FModuleManager::Get().IsModuleLoaded("PythonScriptPlugin"))
+	if (!SoftUE::Python::IsAvailable())
 	{
 		UE_LOG(LogSoftUEBridgeEditor, Warning, TEXT("run-python-script: PythonScriptPlugin is not loaded"));
-		return FBridgeToolResult::Error(TEXT("PythonScriptPlugin is not enabled. Enable it in Edit > Plugins > Scripting > Python Editor Script Plugin"));
-	}
-
-	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
-	if (!PythonPlugin)
-	{
-		return FBridgeToolResult::Error(TEXT("Failed to get PythonScriptPlugin interface"));
+		return PluginUnavailable(
+			TEXT("PythonScriptPlugin"),
+			GetToolName(),
+			TEXT("Enable it in Edit > Plugins > Scripting > Python Editor Script Plugin, then restart the editor."));
 	}
 
 	// Get script or script_path (mutually exclusive)
@@ -152,32 +148,19 @@ FBridgeToolResult URunPythonScriptTool::Execute(
 	// Build and execute the shared preamble first so file-based execution still gets helpers and arguments
 	const FString ScriptArgv0 = ResolvedScriptPath.IsEmpty() ? TEXT("<soft-ue-cli-inline>") : ResolvedScriptPath;
 	const FString PythonPreamble = BuildPythonPreamble(Arguments, PythonPaths, WorldType, ScriptArgv0);
-	bool bSuccess = false;
-	FString Error;
-	FString Output;
 
 	UE_LOG(LogSoftUEBridgeEditor, Log, TEXT("run-python-script: Executing Python code..."));
 
+	FString Output;
 	if (!ScriptPath.IsEmpty() && !PythonPreamble.IsEmpty())
 	{
-		FString PreambleOutput;
-		if (!ExecutePythonCommand(
-			PythonPreamble,
-			EPythonCommandExecutionMode::ExecuteFile,
-			EPythonFileExecutionScope::Public,
-			bSuccess,
-			PreambleOutput,
-			Error))
-		{
-			return FBridgeToolResult::Error(TEXT("Failed to execute Python preamble"));
-		}
-
-		Output = MoveTemp(PreambleOutput);
-		if (!bSuccess)
+		const FBridgePythonResult Preamble = SoftUE::Python::Execute(PythonPreamble, EPythonCommandExecutionMode::ExecuteFile);
+		Output = Preamble.Output;
+		if (!Preamble.bSucceeded)
 		{
 			TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
 			Result->SetBoolField(TEXT("success"), false);
-			Result->SetStringField(TEXT("error"), Error);
+			Result->SetStringField(TEXT("error"), Preamble.Error);
 			if (!Output.IsEmpty())
 			{
 				Result->SetStringField(TEXT("output"), Output);
@@ -186,41 +169,18 @@ FBridgeToolResult URunPythonScriptTool::Execute(
 		}
 	}
 
-	FString ScriptOutput;
-	if (!ScriptPath.IsEmpty())
-	{
-		if (!ExecutePythonCommand(
-			ResolvedScriptPath,
-			EPythonCommandExecutionMode::ExecuteFile,
-			EPythonFileExecutionScope::Public,
-			bSuccess,
-			ScriptOutput,
-			Error))
-		{
-			return FBridgeToolResult::Error(TEXT("Failed to execute Python script file"));
-		}
-	}
-	else
-	{
-		const FString InlineCommand = PythonPreamble + Script;
-		if (!ExecutePythonCommand(
-			InlineCommand,
-			EPythonCommandExecutionMode::ExecuteFile,
-			EPythonFileExecutionScope::Public,
-			bSuccess,
-			ScriptOutput,
-			Error))
-		{
-			return FBridgeToolResult::Error(TEXT("Failed to execute inline Python script"));
-		}
-		Output.Reset();
-	}
+	// A script file runs by path after the preamble; inline source runs with the preamble prepended.
+	const FBridgePythonResult ScriptRun = ScriptPath.IsEmpty()
+		? SoftUE::Python::Execute(PythonPreamble + Script, EPythonCommandExecutionMode::ExecuteFile)
+		: SoftUE::Python::Execute(ResolvedScriptPath, EPythonCommandExecutionMode::ExecuteFile);
+	const bool bSuccess = ScriptRun.bSucceeded;
+	const FString& Error = ScriptRun.Error;
 
-	if (!Output.IsEmpty() && !ScriptOutput.IsEmpty())
+	if (!Output.IsEmpty() && !ScriptRun.Output.IsEmpty())
 	{
 		Output += TEXT("\n");
 	}
-	Output += ScriptOutput;
+	Output += ScriptRun.Output;
 
 	// Build result
 	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
@@ -246,52 +206,6 @@ FBridgeToolResult URunPythonScriptTool::Execute(
 	}
 
 	return FBridgeToolResult::Json(Result);
-}
-
-bool URunPythonScriptTool::ExecutePythonCommand(
-	const FString& Command,
-	EPythonCommandExecutionMode ExecutionMode,
-	EPythonFileExecutionScope FileExecutionScope,
-	bool& bOutSuccess,
-	FString& OutOutput,
-	FString& OutError)
-{
-	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
-	if (!PythonPlugin)
-	{
-		bOutSuccess = false;
-		OutError = TEXT("PythonScriptPlugin interface not available");
-		OutOutput.Reset();
-		return false;
-	}
-
-	FPythonCommandEx PythonCommand;
-	PythonCommand.Flags = EPythonCommandFlags::Unattended;
-	PythonCommand.ExecutionMode = ExecutionMode;
-	PythonCommand.FileExecutionScope = FileExecutionScope;
-	PythonCommand.Command = Command;
-	bOutSuccess = PythonPlugin->ExecPythonCommandEx(PythonCommand);
-
-	OutOutput.Reset();
-	for (const FPythonLogOutputEntry& Entry : PythonCommand.LogOutput)
-	{
-		if (!Entry.Output.IsEmpty())
-		{
-			if (!OutOutput.IsEmpty())
-			{
-				OutOutput += TEXT("\n");
-			}
-			OutOutput += Entry.Output;
-		}
-	}
-
-	OutError = PythonCommand.CommandResult;
-	if (!bOutSuccess && OutError.IsEmpty())
-	{
-		OutError = OutOutput;
-	}
-
-	return true;
 }
 
 bool URunPythonScriptTool::ReadScriptFile(

@@ -5,7 +5,6 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
-#include "EngineUtils.h"
 #include "UObject/UnrealType.h"
 
 FString USetPropertyTool::GetToolDescription() const
@@ -48,18 +47,7 @@ FBridgeToolResult USetPropertyTool::Execute(const TSharedPtr<FJsonObject>& Args,
 		return FBridgeToolResult::Error(TEXT("No world available. Specify 'world': 'editor', 'pie', or 'game'."));
 	}
 
-	// Find actor
-	AActor* Actor = nullptr;
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		AActor* A = *It;
-		if (!A) continue;
-		if (MatchesWildcard(A->GetName(), ActorName) || MatchesWildcard(GetActorLabelSafe(A), ActorName))
-		{
-			Actor = A;
-			break;
-		}
-	}
+	AActor* Actor = FindActorByPattern(World, ActorName);
 	if (!Actor)
 	{
 		return FBridgeToolResult::Error(FString::Printf(TEXT("Actor '%s' not found"), *ActorName));
@@ -75,18 +63,11 @@ FBridgeToolResult USetPropertyTool::Execute(const TSharedPtr<FJsonObject>& Args,
 		const FString CompName = PropertyName.Left(DotIdx);
 		PropKey = PropertyName.Mid(DotIdx + 1);
 
-		TArray<UActorComponent*> Components;
-		Actor->GetComponents(Components);
-		for (UActorComponent* C : Components)
+		if (UActorComponent* Component = FindComponentByName(Actor, CompName))
 		{
-			if (C && C->GetName().Equals(CompName, ESearchCase::IgnoreCase))
-			{
-				TargetObject = C;
-				break;
-			}
+			TargetObject = Component;
 		}
-
-		if (TargetObject == Actor)
+		else
 		{
 			return FBridgeToolResult::Error(
 				FString::Printf(TEXT("Component '%s' not found on '%s'"), *CompName, *ActorName));

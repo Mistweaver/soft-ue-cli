@@ -53,14 +53,14 @@ FBridgeToolResult UExecConsoleCommandTool::Execute(
 	if (WorldType == TEXT("pie"))
 	{
 		const TArray<FBridgePIEWorld> PIEWorlds = FBridgePIEWorlds::Enumerate();
-		const FBridgePIEWorld* Selected = bHasPIEInstance
-			? FBridgePIEWorlds::Resolve(PIEWorlds, PIEInstance)
-			: (PIEWorlds.Num() > 0 ? &PIEWorlds[0] : nullptr);
+		FString SelectError;
+		const FBridgePIEWorld* Selected = FBridgePIEWorlds::Select(
+			PIEWorlds,
+			bHasPIEInstance ? TOptional<int32>(PIEInstance) : TOptional<int32>(),
+			SelectError);
 		if (!Selected)
 		{
-			return bHasPIEInstance
-				? FBridgeToolResult::Error(FString::Printf(TEXT("exec-console-command: PIE instance %d not found; available PIE instances: %s"), PIEInstance, *FBridgePIEWorlds::AvailableInstanceIds(PIEWorlds)))
-				: FBridgeToolResult::Error(TEXT("exec-console-command: no pie world available"));
+			return FBridgeToolResult::Error(FString::Printf(TEXT("exec-console-command: %s"), *SelectError));
 		}
 		World = Selected->World;
 		SelectedPIEInstance = Selected->PIEInstance;

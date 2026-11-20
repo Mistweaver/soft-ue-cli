@@ -76,15 +76,9 @@ FBridgeToolResult UQueryLevelTool::Execute(const TSharedPtr<FJsonObject>& Args, 
 	// Detail mode: find one specific actor
 	if (!ActorName.IsEmpty())
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
+		if (AActor* Actor = FindActorByPattern(World, ActorName))
 		{
-			AActor* Actor = *It;
-			if (!Actor) continue;
-			if (MatchesWildcard(Actor->GetName(), ActorName) ||
-				MatchesWildcard(GetActorLabelSafe(Actor), ActorName))
-			{
-				return FBridgeToolResult::Json(ActorToJson(Actor, true, true, bProperties, PropertyFilter));
-			}
+			return FBridgeToolResult::Json(ActorToJson(Actor, true, true, bProperties, PropertyFilter));
 		}
 		return FBridgeToolResult::Error(FString::Printf(TEXT("Actor '%s' not found"), *ActorName));
 	}
